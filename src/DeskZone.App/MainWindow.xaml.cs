@@ -43,6 +43,12 @@ public partial class MainWindow : Window
             _layoutSaveTimer.Stop();
             await SaveLayoutAsync();
         };
+
+        _desktopHostTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(5)
+        };
+        _desktopHostTimer.Tick += (_, _) => EnsureDesktopAttachment();
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -62,6 +68,9 @@ public partial class MainWindow : Window
             Opacity = Math.Clamp(panel.Opacity, 0.30, 1.0);
             ApplyLockedState(panel.IsLocked, scheduleSave: false);
             ApplyCollapsedState(panel.IsCollapsed, scheduleSave: false);
+
+            EnsureDesktopAttachment();
+            _desktopHostTimer.Start();
         }
         catch (Exception ex)
         {
@@ -87,6 +96,7 @@ public partial class MainWindow : Window
 
         e.Cancel = true;
         _layoutSaveTimer.Stop();
+        _desktopHostTimer.Stop();
 
         try
         {
@@ -354,6 +364,17 @@ public partial class MainWindow : Window
         ResizeMode = _locked || _collapsed
             ? ResizeMode.NoResize
             : ResizeMode.CanResizeWithGrip;
+    }
+
+    private void EnsureDesktopAttachment()
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        if (handle == IntPtr.Zero || _desktopHost.IsAttached(handle))
+        {
+            return;
+        }
+
+        _ = _desktopHost.TryAttach(handle);
     }
 
     private void ScheduleLayoutSave()
