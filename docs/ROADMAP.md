@@ -6,7 +6,7 @@
 - [x] Core / Shell / Storage / Rules 分层
 - [x] GitHub CI 模板
 - [x] Hatchable 原型归档进仓库
-- [ ] GitHub 新仓库创建并首次 push
+- [x] GitHub 新仓库创建并首次 push
 - [ ] 选择最终许可证策略
 
 ## Milestone 1 — 桌面面板
