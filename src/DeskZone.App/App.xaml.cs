@@ -1,4 +1,5 @@
 using System.Windows;
+using DeskZone.Shell;
 using DeskZone.Storage;
 
 namespace DeskZone.App;
@@ -16,7 +17,7 @@ public partial class App : Application
             Backend = LocalBackend.CreateDefault();
             await Backend.InitializeAsync();
 
-            var window = new MainWindow();
+            var window = new MainWindow(Backend, new WindowsShellService());
             MainWindow = window;
             window.Show();
         }
