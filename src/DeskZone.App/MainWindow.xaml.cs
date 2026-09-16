@@ -373,12 +373,13 @@ public partial class MainWindow : Window
     private void EnsureDesktopAttachment()
     {
         var handle = new WindowInteropHelper(this).Handle;
-        if (handle == IntPtr.Zero || _desktopHost.IsAttached(handle))
+        if (handle == IntPtr.Zero)
         {
             return;
         }
 
-        _ = _desktopHost.TryAttach(handle);
+        var attached = _desktopHost.IsAttached(handle) || _desktopHost.TryAttach(handle);
+        ShowInTaskbar = !attached;
     }
 
     private void ScheduleLayoutSave()
