@@ -1,0 +1,11 @@
+<Application x:Class="DeskZone.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Application.Resources>
+        <SolidColorBrush x:Key="BrandBrush" Color="#126FF7" />
+        <SolidColorBrush x:Key="SkyBrush" Color="#1DA4F4" />
+        <SolidColorBrush x:Key="CyanBrush" Color="#31CDEE" />
+        <SolidColorBrush x:Key="TextBrush" Color="#0B2447" />
+        <SolidColorBrush x:Key="MutedBrush" Color="#586981" />
+    </Application.Resources>
+</Application>

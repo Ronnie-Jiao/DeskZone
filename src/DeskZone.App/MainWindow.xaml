@@ -1,0 +1,41 @@
+<Window x:Class="DeskZone.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="桌序 DeskZone"
+        Width="380"
+        Height="650"
+        MinWidth="320"
+        MinHeight="430"
+        WindowStartupLocation="CenterScreen"
+        Background="#F7FBFF">
+    <Border Margin="12" Padding="12" CornerRadius="18" Background="White" BorderBrush="#D7E8F6" BorderThickness="1">
+        <DockPanel>
+            <Grid DockPanel.Dock="Top" Height="42">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Width="24" Height="24" CornerRadius="7" Background="{StaticResource BrandBrush}" Margin="0,0,8,0" />
+                    <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" Text="桌序  DeskZone" />
+                </StackPanel>
+                <TextBlock Grid.Column="1" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" Text="工程骨架" />
+            </Grid>
+
+            <Button DockPanel.Dock="Top" Height="36" Margin="0,8,0,10" Content="＋ 新建分类" Foreground="{StaticResource BrandBrush}" />
+
+            <StackPanel>
+                <TextBlock FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" Text="▾  当前项目" Margin="4,6" />
+                <UniformGrid Columns="4" Margin="0,4,0,12">
+                    <TextBlock Margin="4" TextAlignment="Center" Text="🎨&#10;品牌视觉.psd" />
+                    <TextBlock Margin="4" TextAlignment="Center" Text="📄&#10;需求清单.docx" />
+                    <TextBlock Margin="4" TextAlignment="Center" Text="📁&#10;DeskZone" />
+                    <TextBlock Margin="4" TextAlignment="Center" Text="🖼️&#10;原型草图.png" />
+                </UniformGrid>
+
+                <TextBlock FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" Text="▾  待处理" Margin="4,6" />
+                <TextBlock Margin="8,4" Foreground="{StaticResource MutedBrush}" Text="下一步：接入真实分类模型、拖拽和本地持久化。" TextWrapping="Wrap" />
+            </StackPanel>
+        </DockPanel>
+    </Border>
+</Window>

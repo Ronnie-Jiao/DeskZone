@@ -1,0 +1,35 @@
+# Build output
+bin/
+obj/
+artifacts/
+TestResults/
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
+*.DotSettings.user
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local runtime data
+*.db
+*.db-shm
+*.db-wal
+*.log
+.local/
+
+# Packages
+*.nupkg
+packages/
+
+# Installer output
+installer/output/
+
+# Prototype vendor files downloaded locally
+prototype/hatchable/public/vendor/*.js
+!prototype/hatchable/public/vendor/.gitkeep
