@@ -8,7 +8,6 @@
         MinHeight="430"
         WindowStyle="None"
         ResizeMode="CanResizeWithGrip"
-        ShowInTaskbar="False"
         WindowStartupLocation="Manual"
         Background="#F7FBFF"
         Loaded="Window_Loaded"
