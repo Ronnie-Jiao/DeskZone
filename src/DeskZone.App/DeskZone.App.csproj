@@ -5,11 +5,12 @@
     <UseWPF>true</UseWPF>
     <AssemblyName>DeskZone</AssemblyName>
     <RootNamespace>DeskZone.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\DeskZone.Core\DeskZone.Core.csproj" />
-    <ProjectReference Include="..\DeskZone.Shell\DeskZone.Shell.csproj" />
-    <ProjectReference Include="..\DeskZone.Storage\DeskZone.Storage.csproj" />
-    <ProjectReference Include="..\DeskZone.Rules\DeskZone.Rules.csproj" />
+    <ProjectReference Include="..DeskZone.CoreDeskZone.Core.csproj" />
+    <ProjectReference Include="..DeskZone.ShellDeskZone.Shell.csproj" />
+    <ProjectReference Include="..DeskZone.StorageDeskZone.Storage.csproj" />
+    <ProjectReference Include="..DeskZone.RulesDeskZone.Rules.csproj" />
   </ItemGroup>
 </Project>

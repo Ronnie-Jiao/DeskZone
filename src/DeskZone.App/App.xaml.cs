@@ -17,7 +17,10 @@ public partial class App : Application
             Backend = LocalBackend.CreateDefault();
             await Backend.InitializeAsync();
 
-            var window = new MainWindow(Backend, new WindowsShellService());
+            var window = new MainWindow(
+                Backend,
+                new WindowsShellService(),
+                new WindowsDesktopHostService());
             MainWindow = window;
             window.Show();
         }
