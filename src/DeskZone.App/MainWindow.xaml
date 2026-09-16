@@ -6,36 +6,227 @@
         Height="650"
         MinWidth="320"
         MinHeight="430"
-        WindowStartupLocation="CenterScreen"
-        Background="#F7FBFF">
-    <Border Margin="12" Padding="12" CornerRadius="18" Background="White" BorderBrush="#D7E8F6" BorderThickness="1">
-        <DockPanel>
-            <Grid DockPanel.Dock="Top" Height="42">
+        WindowStyle="None"
+        ResizeMode="CanResizeWithGrip"
+        WindowStartupLocation="Manual"
+        Background="#F7FBFF"
+        Loaded="Window_Loaded"
+        Closing="Window_Closing"
+        LocationChanged="Window_LayoutChanged"
+        SizeChanged="Window_LayoutChanged">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+        <Style x:Key="TitleIconButton" TargetType="Button">
+            <Setter Property="Width" Value="30" />
+            <Setter Property="Height" Value="30" />
+            <Setter Property="Margin" Value="2,0" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FontSize" Value="14" />
+        </Style>
+        <Style x:Key="FlatIconButton" TargetType="Button" BasedOn="{StaticResource TitleIconButton}">
+            <Setter Property="Width" Value="28" />
+            <Setter Property="Height" Value="28" />
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+    </Window.Resources>
+
+    <Border Margin="8"
+            CornerRadius="18"
+            Background="White"
+            BorderBrush="#D7E8F6"
+            BorderThickness="1">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="28" ShadowDepth="8" Opacity="0.18" Color="#0B2447" />
+        </Border.Effect>
+
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="48" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0"
+                  x:Name="TitleBar"
+                  Background="Transparent"
+                  MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <Border Width="24" Height="24" CornerRadius="7" Background="{StaticResource BrandBrush}" Margin="0,0,8,0" />
-                    <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" Text="桌序  DeskZone" />
+
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+                    <Border Width="24" Height="24" CornerRadius="7" Background="{StaticResource BrandBrush}" Margin="0,0,8,0">
+                        <TextBlock Text="Z" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" Text="桌序" />
+                    <TextBlock VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" Margin="6,0,0,0" Text="DeskZone" />
                 </StackPanel>
-                <TextBlock Grid.Column="1" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" Text="工程骨架" />
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0">
+                    <Button x:Name="LockButton" Style="{StaticResource TitleIconButton}" ToolTip="锁定位置" Content="🔓" Click="Lock_Click" />
+                    <Button x:Name="CollapseButton" Style="{StaticResource TitleIconButton}" ToolTip="折叠面板" Content="—" Click="Collapse_Click" />
+                    <Button Style="{StaticResource TitleIconButton}" ToolTip="设置 / 数据位置" Content="⚙" Click="Settings_Click" />
+                    <Button Style="{StaticResource TitleIconButton}" ToolTip="退出 DeskZone" Content="×" Click="Close_Click" />
+                </StackPanel>
             </Grid>
 
-            <Button DockPanel.Dock="Top" Height="36" Margin="0,8,0,10" Content="＋ 新建分类" Foreground="{StaticResource BrandBrush}" />
+            <Grid Grid.Row="1" x:Name="WorkspaceBody" Margin="10,4,10,10">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
 
-            <StackPanel>
-                <TextBlock FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" Text="▾  当前项目" Margin="4,6" />
-                <UniformGrid Columns="4" Margin="0,4,0,12">
-                    <TextBlock Margin="4" TextAlignment="Center" Text="🎨&#10;品牌视觉.psd" />
-                    <TextBlock Margin="4" TextAlignment="Center" Text="📄&#10;需求清单.docx" />
-                    <TextBlock Margin="4" TextAlignment="Center" Text="📁&#10;DeskZone" />
-                    <TextBlock Margin="4" TextAlignment="Center" Text="🖼️&#10;原型草图.png" />
-                </UniformGrid>
+                <Button Grid.Row="0"
+                        Height="36"
+                        Margin="0,0,0,8"
+                        BorderBrush="#79B8F8"
+                        BorderThickness="1"
+                        Background="#EEF8FF"
+                        Foreground="{StaticResource BrandBrush}"
+                        FontWeight="SemiBold"
+                        Cursor="Hand"
+                        Content="＋ 新建分类"
+                        Click="NewCategory_Click" />
 
-                <TextBlock FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" Text="▾  待处理" Margin="4,6" />
-                <TextBlock Margin="8,4" Foreground="{StaticResource MutedBrush}" Text="下一步：接入真实分类模型、拖拽和本地持久化。" TextWrapping="Wrap" />
-            </StackPanel>
-        </DockPanel>
+                <ScrollViewer Grid.Row="1"
+                              x:Name="CategoryScroll"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding Categories}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,0,8"
+                                        Padding="6"
+                                        CornerRadius="11"
+                                        BorderBrush="#E5EEF6"
+                                        BorderThickness="1"
+                                        Background="#FCFEFF"
+                                        AllowDrop="True"
+                                        Tag="{Binding}"
+                                        DragEnter="Category_DragEnter"
+                                        DragLeave="Category_DragLeave"
+                                        Drop="Category_Drop">
+                                    <StackPanel>
+                                        <Grid Height="36">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="28" />
+                                                <ColumnDefinition Width="14" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="34" />
+                                                <ColumnDefinition Width="30" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <Button Grid.Column="0"
+                                                    Style="{StaticResource FlatIconButton}"
+                                                    Content="{Binding ToggleGlyph}"
+                                                    Tag="{Binding}"
+                                                    Click="ToggleCategory_Click" />
+
+                                            <Ellipse Grid.Column="1"
+                                                     Width="8"
+                                                     Height="8"
+                                                     HorizontalAlignment="Left"
+                                                     VerticalAlignment="Center"
+                                                     Fill="{Binding Color}" />
+
+                                            <TextBox Grid.Column="2"
+                                                     Margin="2,0,6,0"
+                                                     Padding="2,0"
+                                                     VerticalContentAlignment="Center"
+                                                     BorderThickness="0"
+                                                     Background="Transparent"
+                                                     Foreground="{StaticResource TextBrush}"
+                                                     FontWeight="SemiBold"
+                                                     Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                     Tag="{Binding}"
+                                                     LostKeyboardFocus="CategoryName_LostKeyboardFocus"
+                                                     KeyDown="CategoryName_KeyDown" />
+
+                                            <TextBlock Grid.Column="3"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="{StaticResource MutedBrush}"
+                                                       FontSize="11"
+                                                       Text="{Binding Items.Count}" />
+
+                                            <Button Grid.Column="4"
+                                                    Style="{StaticResource FlatIconButton}"
+                                                    ToolTip="删除分类"
+                                                    Content="⋯"
+                                                    Tag="{Binding}"
+                                                    Click="DeleteCategory_Click" />
+                                        </Grid>
+
+                                        <ItemsControl ItemsSource="{Binding Items}"
+                                                      Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVisibility}}">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <WrapPanel IsItemsHost="True" />
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Width="78"
+                                                            MinHeight="72"
+                                                            Margin="3"
+                                                            Padding="5"
+                                                            CornerRadius="8"
+                                                            Background="#F5FAFE"
+                                                            BorderBrush="#E3EEF7"
+                                                            BorderThickness="1"
+                                                            Cursor="Hand"
+                                                            ToolTip="{Binding Path}"
+                                                            Tag="{Binding}"
+                                                            MouseLeftButtonDown="FileCard_MouseLeftButtonDown">
+                                                        <StackPanel>
+                                                            <TextBlock HorizontalAlignment="Center"
+                                                                       FontSize="24"
+                                                                       Text="{Binding IconGlyph}" />
+                                                            <TextBlock Margin="2,4,2,0"
+                                                                       HorizontalAlignment="Stretch"
+                                                                       TextAlignment="Center"
+                                                                       TextWrapping="Wrap"
+                                                                       TextTrimming="CharacterEllipsis"
+                                                                       MaxHeight="32"
+                                                                       FontSize="10.5"
+                                                                       Foreground="{StaticResource TextBrush}"
+                                                                       Text="{Binding Name}" />
+                                                        </StackPanel>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+
+                                        <Border Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVisibility}}"
+                                                Margin="3,4,3,1"
+                                                Padding="8"
+                                                CornerRadius="7"
+                                                BorderBrush="#B9DDF8"
+                                                BorderThickness="1"
+                                                Background="#F4FAFF">
+                                            <TextBlock HorizontalAlignment="Center"
+                                                       Foreground="{StaticResource MutedBrush}"
+                                                       FontSize="10.5"
+                                                       Text="可从 Explorer 拖入文件 / 文件夹 / 快捷方式 · 默认仅建立引用" />
+                                        </Border>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+
+                <Border Grid.Row="2" Margin="0,8,0,0" Padding="6,4" CornerRadius="7" Background="#F1F8FE">
+                    <TextBlock FontSize="10.5"
+                               Foreground="{StaticResource MutedBrush}"
+                               TextWrapping="Wrap"
+                               Text="{Binding StatusMessage}" />
+                </Border>
+            </Grid>
+        </Grid>
     </Border>
 </Window>
