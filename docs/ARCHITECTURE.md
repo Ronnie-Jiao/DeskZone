@@ -44,3 +44,16 @@ Application/Core
 - `LocalBackend`：本地服务组合入口。
 
 真实文件收纳仍属于 Milestone 4，未在当前版本默认启用。
+
+
+## Windows Desktop Host
+
+`DeskZone.Shell.WindowsDesktopHostService` 负责把 WPF 主窗口挂载到 Windows 桌面层：
+
+1. 向 `Progman` 发送 WorkerW 初始化消息。
+2. 查找承载 `SHELLDLL_DefView` 的窗口与其后方 WorkerW。
+3. 使用 `SetParent` 将 DeskZone HWND 挂载到桌面宿主。
+4. 不使用 `TopMost` 模拟桌面常驻。
+5. UI 层每 5 秒做一次轻量宿主健康检查；正常挂载时只检查 HWND / parent，只有 WorkerW 失效时才重新枚举 Shell 窗口。
+
+该实现为 v1，需要在 Windows 10 / 11、多显示器、Explorer 重启和不同 DPI 模式下继续做人工兼容性验收。

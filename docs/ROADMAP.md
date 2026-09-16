@@ -11,11 +11,13 @@
 
 ## Milestone 1 — 桌面面板
 
-- [x] 无边框客户端面板（正式 Desktop WorkerW 挂载仍待 Shell 层）
+- [x] 无边框客户端面板
+- [x] Windows Desktop / WorkerW 挂载 v1（不使用 TopMost）
 - [x] 拖动 / Resize
 - [x] 锁定 / 折叠
 - [x] 位置、尺寸、透明度、锁定与折叠状态保存
-- [ ] Explorer 重启后的桌面层挂载恢复
+- [x] WorkerW 失效后的自动重新挂载（5 秒健康检查，仅脱离时重新枚举）
+- [ ] Windows 10 / 11 多版本人工兼容性验收
 
 ## Milestone 2 — 分类
 
@@ -59,8 +61,8 @@
 
 下一步优先完成：
 
-1. Windows Desktop / WorkerW 真正挂载，不使用 TopMost 冒充桌面层。
-2. Explorer 重启后的自动重新挂载。
-3. Shell 系统图标 / 缩略图。
-4. 分类排序与分类间拖动引用。
-5. 按目录聚合 FileSystemWatcher。
+1. Windows 10 / 11 真机验证 WorkerW 挂载、拖动和 Explorer 重启恢复。
+2. Shell 系统图标 / 缩略图。
+3. 分类排序与分类间拖动引用。
+4. 按目录聚合 FileSystemWatcher。
+5. 托盘与全局显示 / 隐藏快捷键。

@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using DeskZone.App.ViewModels;
@@ -17,7 +18,9 @@ public partial class MainWindow : Window
 
     private readonly LocalBackend _backend;
     private readonly WorkspaceViewModel _viewModel;
+    private readonly IDesktopHostService _desktopHost;
     private readonly DispatcherTimer _layoutSaveTimer;
+    private readonly DispatcherTimer _desktopHostTimer;
 
     private bool _applyingLayout;
     private bool _allowClose;
@@ -26,11 +29,12 @@ public partial class MainWindow : Window
     private double _expandedHeight = 650;
     private DateTimeOffset _panelCreatedAt = DateTimeOffset.UtcNow;
 
-    public MainWindow(LocalBackend backend, IShellService shell)
+    public MainWindow(LocalBackend backend, IShellService shell, IDesktopHostService desktopHost)
     {
         InitializeComponent();
 
         _backend = backend;
+        _desktopHost = desktopHost;
         _viewModel = new WorkspaceViewModel(backend, shell);
         DataContext = _viewModel;
 
@@ -43,6 +47,12 @@ public partial class MainWindow : Window
             _layoutSaveTimer.Stop();
             await SaveLayoutAsync();
         };
+
+        _desktopHostTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(5)
+        };
+        _desktopHostTimer.Tick += (_, _) => EnsureDesktopAttachment();
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -62,6 +72,9 @@ public partial class MainWindow : Window
             Opacity = Math.Clamp(panel.Opacity, 0.30, 1.0);
             ApplyLockedState(panel.IsLocked, scheduleSave: false);
             ApplyCollapsedState(panel.IsCollapsed, scheduleSave: false);
+
+            EnsureDesktopAttachment();
+            _desktopHostTimer.Start();
         }
         catch (Exception ex)
         {
@@ -87,6 +100,7 @@ public partial class MainWindow : Window
 
         e.Cancel = true;
         _layoutSaveTimer.Stop();
+        _desktopHostTimer.Stop();
 
         try
         {
@@ -354,6 +368,18 @@ public partial class MainWindow : Window
         ResizeMode = _locked || _collapsed
             ? ResizeMode.NoResize
             : ResizeMode.CanResizeWithGrip;
+    }
+
+    private void EnsureDesktopAttachment()
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        if (handle == IntPtr.Zero)
+        {
+            return;
+        }
+
+        var attached = _desktopHost.IsAttached(handle) || _desktopHost.TryAttach(handle);
+        ShowInTaskbar = !attached;
     }
 
     private void ScheduleLayoutSave()
