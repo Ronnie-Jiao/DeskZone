@@ -1,3 +1,4 @@
+using System.IO;
 using System.Collections.ObjectModel;
 using DeskZone.Core.Models;
 using DeskZone.Core.Services;
@@ -57,6 +58,51 @@ public sealed class WorkspaceViewModel : BindableBase
         return viewModel;
     }
 
+    public async Task<CategoryViewModel> CreateCategoryFromFolderAsync(
+        string folderPath,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedPath = Path.GetFullPath(folderPath.Trim().Trim('"'));
+        if (!Directory.Exists(normalizedPath))
+        {
+            throw new DirectoryNotFoundException($"拖入的文件夹不存在或已无法访问：{normalizedPath}");
+        }
+
+        var directory = new DirectoryInfo(normalizedPath);
+        var childPaths = directory
+            .EnumerateFileSystemInfos()
+            .OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(entry => entry.FullName)
+            .ToArray();
+
+        IsBusy = true;
+        try
+        {
+            var category = await _backend.Categories.CreateAsync(directory.Name, "#126FF7", cancellationToken);
+            var viewModel = new CategoryViewModel(category, Array.Empty<DesktopItem>());
+            Categories.Add(viewModel);
+
+            AddReferencesResult? result = null;
+            if (childPaths.Length > 0)
+            {
+                result = await _backend.Items.AddReferencesAsync(category.Id, childPaths, cancellationToken);
+                await ReloadCategoryItemsAsync(viewModel, cancellationToken);
+            }
+
+            StatusMessage = result is null
+                ? $"已创建分类“{category.Name}”，但文件夹为空。"
+                : result.Failures.Count == 0
+                    ? $"已根据“{category.Name}”创建分类，并加入 {result.Accepted} 个入口。"
+                    : $"已创建分类“{category.Name}”，加入 {result.Accepted} 个入口，{result.Failures.Count} 个项目未加入。";
+
+            return viewModel;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
     public async Task RenameCategoryAsync(CategoryViewModel category, string name, CancellationToken cancellationToken = default)
     {
         var trimmed = name.Trim();
@@ -74,8 +120,55 @@ public sealed class WorkspaceViewModel : BindableBase
     public async Task ToggleCategoryAsync(CategoryViewModel category, CancellationToken cancellationToken = default)
     {
         var expanded = !category.IsExpanded;
+        if (category.IsSystem)
+        {
+            category.SetExpanded(expanded);
+            return;
+        }
+
         await _backend.Categories.SetCollapsedAsync(category.Id, !expanded, cancellationToken);
         category.SetExpanded(expanded);
+    }
+
+    public async Task MoveCategoryAsync(
+        Guid sourceCategoryId,
+        Guid targetCategoryId,
+        CancellationToken cancellationToken = default)
+    {
+        var source = Categories.FirstOrDefault(category => category.Id == sourceCategoryId);
+        var target = Categories.FirstOrDefault(category => category.Id == targetCategoryId);
+        if (source is null || target is null || source == target || source.IsSystem || target.IsSystem)
+        {
+            return;
+        }
+
+        var originalOrder = Categories.ToArray();
+        var sourceIndex = Categories.IndexOf(source);
+        Categories.RemoveAt(sourceIndex);
+        Categories.Insert(Categories.IndexOf(target), source);
+
+        IsBusy = true;
+        try
+        {
+            await _backend.Categories.ReorderAsync(
+                Categories.Where(category => !category.IsSystem).Select(category => category.Id).ToArray(),
+                cancellationToken);
+            StatusMessage = $"已将分类“{source.Name}”移动到“{target.Name}”之前。";
+        }
+        catch
+        {
+            Categories.Clear();
+            foreach (var category in originalOrder)
+            {
+                Categories.Add(category);
+            }
+
+            throw;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     public async Task DeleteCategoryAsync(CategoryViewModel category, bool moveItemsToUnclassified, CancellationToken cancellationToken = default)
@@ -108,6 +201,104 @@ public sealed class WorkspaceViewModel : BindableBase
         }
     }
 
+    public async Task<MoveItemsResult> MovePathsIntoCategoryAsync(
+        CategoryViewModel category,
+        IEnumerable<string> paths,
+        CancellationToken cancellationToken = default)
+    {
+        IsBusy = true;
+        try
+        {
+            var result = await _backend.Items.MovePathsIntoCategoryAsync(category.Id, paths, cancellationToken);
+            await ReloadAsync(cancellationToken);
+            StatusMessage = result.Failures.Count == 0
+                ? $"已移动 {result.Moved} 个项目到“{category.Name}”。"
+                : $"已移动 {result.Moved} 个项目到“{category.Name}”，{result.Failures.Count} 个项目未移动。";
+            return result;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    public async Task MoveItemToCategoryAsync(
+        Guid itemId,
+        CategoryViewModel targetCategory,
+        CancellationToken cancellationToken = default)
+    {
+        IsBusy = true;
+        try
+        {
+            await _backend.Items.MoveToCategoryAsync(new[] { itemId }, targetCategory.Id, cancellationToken);
+            await ReloadAsync(cancellationToken);
+            StatusMessage = $"已将项目移动到“{targetCategory.Name}”。";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    public async Task ReorderItemsAsync(
+        CategoryViewModel category,
+        int sourceIndex,
+        int targetIndex,
+        CancellationToken cancellationToken = default)
+    {
+        if (category.IsSystem || sourceIndex < 0 || sourceIndex >= category.Items.Count ||
+            targetIndex < 0 || targetIndex >= category.Items.Count ||
+            sourceIndex == targetIndex)
+        {
+            return;
+        }
+
+        var originalOrder = category.Items.ToArray();
+        category.MoveItem(sourceIndex, targetIndex);
+
+        IsBusy = true;
+        try
+        {
+            await _backend.Items.ReorderAsync(
+                category.Id,
+                category.Items.Select(item => item.Id).ToArray(),
+                cancellationToken);
+            StatusMessage = "已调整项目顺序。";
+        }
+        catch
+        {
+            category.RestoreItems(originalOrder);
+            throw;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    public async Task MoveItemToDesktopAsync(
+        DesktopItemViewModel item,
+        CancellationToken cancellationToken = default)
+    {
+        var desktopDirectory = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        if (string.IsNullOrWhiteSpace(desktopDirectory))
+        {
+            desktopDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+        }
+
+        IsBusy = true;
+        try
+        {
+            await _backend.Items.MoveItemToDirectoryAsync(item.Id, desktopDirectory, cancellationToken);
+            await ReloadAsync(cancellationToken);
+            StatusMessage = $"已将“{item.Name}”移动到桌面。";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
     public async Task OpenItemAsync(DesktopItemViewModel item, CancellationToken cancellationToken = default)
     {
         if (item.IsMissing)
@@ -117,6 +308,8 @@ public sealed class WorkspaceViewModel : BindableBase
         }
 
         await _shell.OpenAsync(item.Path, cancellationToken);
+        await _backend.Items.RecordOpenedAsync(item.Model, cancellationToken);
+        await ReloadRecentlyOpenedItemsAsync(cancellationToken);
         StatusMessage = $"已交给 Windows 打开“{item.Name}”。";
     }
 
@@ -138,9 +331,43 @@ public sealed class WorkspaceViewModel : BindableBase
 
         foreach (var category in categories)
         {
-            var items = await _backend.Items.ListByCategoryAsync(category.Id, cancellationToken);
+            var items = category.IsRecentlyOpened
+                ? await GetRecentlyOpenedDesktopItemsAsync(category.Id, cancellationToken)
+                : await _backend.Items.ListByCategoryAsync(category.Id, cancellationToken);
             Categories.Add(new CategoryViewModel(category, items));
         }
+    }
+
+    private async Task ReloadRecentlyOpenedItemsAsync(CancellationToken cancellationToken)
+    {
+        var category = Categories.FirstOrDefault(candidate => candidate.IsRecentlyOpened);
+        if (category is null)
+        {
+            return;
+        }
+
+        category.ReplaceItems(await GetRecentlyOpenedDesktopItemsAsync(category.Id, cancellationToken));
+    }
+
+    private async Task<IReadOnlyList<DesktopItem>> GetRecentlyOpenedDesktopItemsAsync(
+        Guid categoryId,
+        CancellationToken cancellationToken)
+    {
+        var recentItems = await _backend.Items.ListRecentlyOpenedAsync(10, cancellationToken);
+        return recentItems
+            .Select((item, index) => new DesktopItem(
+                item.ItemId,
+                categoryId,
+                DesktopItemMode.Reference,
+                item.Path,
+                null,
+                item.DisplayName,
+                item.ItemType,
+                index,
+                !File.Exists(item.Path) && !Directory.Exists(item.Path),
+                item.OpenedAt,
+                item.OpenedAt))
+            .ToArray();
     }
 
     private async Task ReloadCategoryItemsAsync(CategoryViewModel category, CancellationToken cancellationToken)

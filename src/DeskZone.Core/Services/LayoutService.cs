@@ -31,7 +31,7 @@ public sealed class LayoutService : ILayoutService
             80,
             380,
             650,
-            0.96,
+            1.0,
             false,
             false,
             now,

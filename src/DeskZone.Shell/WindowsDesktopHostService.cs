@@ -1,15 +1,32 @@
 using System.Runtime.InteropServices;
-using System.Text;
 using DeskZone.Core.Services;
 
 namespace DeskZone.Shell;
 
+/// <summary>
+/// Keeps DeskZone as a lightweight desktop component. It remains a top-level
+/// surface so Explorer cannot paint over it, is owned by the desktop shell,
+/// and is placed directly above the desktop but below ordinary app windows.
+/// </summary>
 public sealed class WindowsDesktopHostService : IDesktopHostService
 {
-    private const uint SpawnWorkerMessage = 0x052C;
-    private const uint SmtoAbortIfHung = 0x0002;
+    private const int SmCxScreen = 0;
+    private const int SmCyScreen = 1;
+    private const int GwlExStyle = -20;
+    private const int GwlHwndParent = -8;
+    private const uint GwOwner = 4;
+    private const long WsExToolWindow = 0x00000080L;
+    private const int ShowWindowNoActivateCommand = 4;
+    private const uint SetWindowPosNoSize = 0x0001;
+    private const uint SetWindowPosNoActivate = 0x0010;
+    private const uint SetWindowPosFrameChanged = 0x0020;
+    private const uint SetWindowPosShowWindow = 0x0040;
+    private static readonly IntPtr HwndNoTopMost = new(-2);
 
-    private IntPtr _desktopHost;
+    private IntPtr _attachedWindow;
+    private IntPtr _desktopOwner;
+    private IntPtr _previousOwner;
+    private long _previousExtendedStyle;
 
     public bool TryAttach(IntPtr windowHandle)
     {
@@ -23,138 +40,246 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
             return true;
         }
 
-        var host = FindDesktopHost();
-        if (host == IntPtr.Zero)
+        var desktopOwner = FindDesktopShellWindow();
+        if (desktopOwner == IntPtr.Zero || !GetWindowRect(windowHandle, out var windowRect))
         {
             return false;
         }
 
-        _ = SetParent(windowHandle, host);
-        if (GetParent(windowHandle) != host)
+        var screenWidth = GetSystemMetrics(SmCxScreen);
+        var screenHeight = GetSystemMetrics(SmCyScreen);
+        var panelWidth = windowRect.Right - windowRect.Left;
+        var panelHeight = windowRect.Bottom - windowRect.Top;
+        var left = Math.Clamp(windowRect.Left, 0, Math.Max(0, screenWidth - panelWidth));
+        var top = Math.Clamp(windowRect.Top, 0, Math.Max(0, screenHeight - panelHeight));
+
+        var previousOwner = GetParent(windowHandle);
+        var previousExtendedStyle = GetWindowLongPtr(windowHandle, GwlExStyle).ToInt64();
+        var componentExtendedStyle = previousExtendedStyle | WsExToolWindow;
+
+        _ = SetWindowLongPtr(windowHandle, GwlExStyle, new IntPtr(componentExtendedStyle));
+        _ = SetWindowLongPtr(windowHandle, GwlHwndParent, desktopOwner);
+
+        // Keep the component in the desktop layer, below ordinary applications
+        // while remaining available when Win+D returns to the desktop.
+        if (!SetWindowPos(
+                windowHandle,
+                IntPtr.Zero,
+                left,
+                top,
+                0,
+                0,
+                SetWindowPosNoSize |
+                SetWindowPosNoActivate |
+                SetWindowPosFrameChanged))
+        {
+            RestoreTopLevelWindow(windowHandle, previousOwner, previousExtendedStyle, windowRect);
+            return false;
+        }
+
+        // FrameChanged can reset z-order on this Explorer build, so apply the
+        // component layer in a separate call after style recalculation.
+        if (!SetWindowPos(
+                windowHandle,
+                HwndNoTopMost,
+                left,
+                top,
+                0,
+                0,
+                SetWindowPosNoSize |
+                SetWindowPosNoActivate |
+                SetWindowPosShowWindow))
+        {
+            RestoreTopLevelWindow(windowHandle, previousOwner, previousExtendedStyle, windowRect);
+            return false;
+        }
+
+        _ = ShowWindow(windowHandle, ShowWindowNoActivateCommand);
+        _attachedWindow = windowHandle;
+        _desktopOwner = desktopOwner;
+        _previousOwner = previousOwner;
+        _previousExtendedStyle = previousExtendedStyle;
+        return true;
+    }
+
+    public bool TryDetach(IntPtr windowHandle)
+    {
+        if (windowHandle == IntPtr.Zero || !IsWindow(windowHandle))
         {
             return false;
         }
 
-        _desktopHost = host;
+        if (!IsAttached(windowHandle))
+        {
+            ClearAttachment();
+            return true;
+        }
+
+        if (!GetWindowRect(windowHandle, out var screenRect))
+        {
+            return false;
+        }
+
+        RestoreTopLevelWindow(windowHandle, _previousOwner, _previousExtendedStyle, screenRect);
+        ClearAttachment();
         return true;
     }
 
     public bool IsAttached(IntPtr windowHandle)
     {
-        if (windowHandle == IntPtr.Zero || _desktopHost == IntPtr.Zero)
+        if (_attachedWindow == IntPtr.Zero || windowHandle != _attachedWindow ||
+            _desktopOwner == IntPtr.Zero || !IsWindow(windowHandle) || !IsWindow(_desktopOwner) ||
+            !IsWindowVisible(windowHandle))
         {
+            if (_attachedWindow == windowHandle || !IsWindow(_attachedWindow))
+            {
+                ClearAttachment();
+            }
+
             return false;
         }
 
-        if (!IsWindow(windowHandle) || !IsWindow(_desktopHost))
+        if (GetWindow(windowHandle, GwOwner) == _desktopOwner)
         {
-            _desktopHost = IntPtr.Zero;
-            return false;
+            if (!GetWindowRect(windowHandle, out var rect) ||
+                !SetWindowPos(
+                    windowHandle,
+                    HwndNoTopMost,
+                    rect.Left,
+                    rect.Top,
+                    0,
+                    0,
+                    SetWindowPosNoSize |
+                    SetWindowPosNoActivate |
+                    SetWindowPosShowWindow))
+            {
+                ClearAttachment();
+                return false;
+            }
+
+            _ = ShowWindow(windowHandle, ShowWindowNoActivateCommand);
+            return true;
         }
 
-        return GetParent(windowHandle) == _desktopHost;
+        ClearAttachment();
+        return false;
     }
 
-    private static IntPtr FindDesktopHost()
+    private static IntPtr FindDesktopShellWindow()
     {
-        var progman = FindWindow("Progman", null);
-        if (progman != IntPtr.Zero)
+        var desktopShellWindow = IntPtr.Zero;
+        _ = EnumWindows((topLevelWindow, _) =>
         {
-            _ = SendMessageTimeout(
-                progman,
-                SpawnWorkerMessage,
-                UIntPtr.Zero,
-                IntPtr.Zero,
-                SmtoAbortIfHung,
-                1000,
-                out _);
-        }
-
-        IntPtr shellViewHost = IntPtr.Zero;
-        _ = EnumWindows((topLevel, _) =>
-        {
-            if (FindWindowEx(topLevel, IntPtr.Zero, "SHELLDLL_DefView", null) == IntPtr.Zero)
+            var desktopView = FindWindowEx(topLevelWindow, IntPtr.Zero, "SHELLDLL_DefView", null);
+            if (desktopView == IntPtr.Zero || !IsUsableDesktopHost(topLevelWindow))
             {
                 return true;
             }
 
-            shellViewHost = topLevel;
+            desktopShellWindow = topLevelWindow;
             return false;
         }, IntPtr.Zero);
 
-        if (shellViewHost != IntPtr.Zero)
+        return desktopShellWindow;
+    }
+
+    private static bool IsUsableDesktopHost(IntPtr windowHandle)
+    {
+        if (!IsWindow(windowHandle) || !GetWindowRect(windowHandle, out var rect))
         {
-            var siblingWorker = FindWindowEx(IntPtr.Zero, shellViewHost, "WorkerW", null);
-            if (siblingWorker != IntPtr.Zero)
-            {
-                return siblingWorker;
-            }
+            return false;
         }
 
-        IntPtr workerFallback = IntPtr.Zero;
-        _ = EnumWindows((topLevel, _) =>
-        {
-            if (!string.Equals(GetWindowClassName(topLevel), "WorkerW", StringComparison.Ordinal))
-            {
-                return true;
-            }
-
-            if (FindWindowEx(topLevel, IntPtr.Zero, "SHELLDLL_DefView", null) != IntPtr.Zero)
-            {
-                return true;
-            }
-
-            workerFallback = topLevel;
-            return false;
-        }, IntPtr.Zero);
-
-        return workerFallback != IntPtr.Zero ? workerFallback : progman;
+        var width = rect.Right - rect.Left;
+        var height = rect.Bottom - rect.Top;
+        var screenWidth = GetSystemMetrics(SmCxScreen);
+        var screenHeight = GetSystemMetrics(SmCyScreen);
+        return screenWidth > 0 && screenHeight > 0 &&
+               width >= screenWidth / 2 && height >= screenHeight / 2;
     }
 
-    private static string GetWindowClassName(IntPtr window)
+    private static void RestoreTopLevelWindow(IntPtr windowHandle, IntPtr previousOwner, long previousExtendedStyle, Rect screenRect)
     {
-        var buffer = new StringBuilder(128);
-        return GetClassName(window, buffer, buffer.Capacity) > 0
-            ? buffer.ToString()
-            : string.Empty;
+        _ = SetWindowLongPtr(windowHandle, GwlHwndParent, previousOwner);
+        _ = SetWindowLongPtr(windowHandle, GwlExStyle, new IntPtr(previousExtendedStyle));
+        _ = SetWindowPos(
+            windowHandle,
+            IntPtr.Zero,
+            screenRect.Left,
+            screenRect.Top,
+            0,
+            0,
+            SetWindowPosNoSize |
+            SetWindowPosNoActivate |
+            SetWindowPosFrameChanged |
+            SetWindowPosShowWindow);
     }
 
-    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    private void ClearAttachment()
+    {
+        _attachedWindow = IntPtr.Zero;
+        _desktopOwner = IntPtr.Zero;
+        _previousOwner = IntPtr.Zero;
+        _previousExtendedStyle = 0;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Rect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    private delegate bool EnumWindowsCallback(IntPtr windowHandle, IntPtr lParam);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    private static extern bool EnumWindows(EnumWindowsCallback callback, IntPtr lParam);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern IntPtr FindWindow(string? lpClassName, string? lpWindowName);
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern IntPtr FindWindowEx(
-        IntPtr hWndParent,
-        IntPtr hWndChildAfter,
-        string? lpszClass,
-        string? lpszWindow);
+    private static extern IntPtr FindWindowEx(IntPtr parentWindow, IntPtr childAfter, string className, string? windowName);
 
     [DllImport("user32.dll", SetLastError = true)]
-    private static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
+    private static extern IntPtr GetParent(IntPtr windowHandle);
 
     [DllImport("user32.dll", SetLastError = true)]
-    private static extern IntPtr GetParent(IntPtr hWnd);
+    private static extern IntPtr GetWindow(IntPtr windowHandle, uint command);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
+    private static extern IntPtr GetWindowLongPtr(IntPtr windowHandle, int index);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
+    private static extern IntPtr SetWindowLongPtr(IntPtr windowHandle, int index, IntPtr newValue);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsWindow(IntPtr hWnd);
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int index);
 
     [DllImport("user32.dll", SetLastError = true)]
-    private static extern IntPtr SendMessageTimeout(
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowRect(IntPtr windowHandle, out Rect rect);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(
         IntPtr hWnd,
-        uint Msg,
-        UIntPtr wParam,
-        IntPtr lParam,
-        uint fuFlags,
-        uint uTimeout,
-        out UIntPtr lpdwResult);
+        IntPtr hWndInsertAfter,
+        int x,
+        int y,
+        int cx,
+        int cy,
+        uint flags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ShowWindow(IntPtr hWnd, int command);
 }

@@ -52,7 +52,7 @@ public sealed class LocalBackend
             settings,
             backup,
             new CategoryService(workspace),
-            new DesktopItemService(workspace),
+            new DesktopItemService(workspace, paths.ManagedStorageDirectory),
             new LayoutService(workspace));
     }
 

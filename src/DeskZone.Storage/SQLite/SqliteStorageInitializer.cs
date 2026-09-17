@@ -5,7 +5,7 @@ namespace DeskZone.Storage.SQLite;
 
 public sealed class SqliteStorageInitializer : IStorageInitializer
 {
-    public const int TargetSchemaVersion = 1;
+    public const int TargetSchemaVersion = 2;
 
     private readonly DataPaths _paths;
     private readonly SqliteConnectionFactory _connections;
@@ -50,6 +50,11 @@ public sealed class SqliteStorageInitializer : IStorageInitializer
             await ApplyV1Async(connection, cancellationToken);
         }
 
+        if (currentVersion < 2)
+        {
+            await ApplyV2Async(connection, cancellationToken);
+        }
+
         await VerifyAsync(connection, cancellationToken);
     }
 
@@ -75,7 +80,7 @@ public sealed class SqliteStorageInitializer : IStorageInitializer
                     top_dip REAL NOT NULL,
                     width_dip REAL NOT NULL,
                     height_dip REAL NOT NULL,
-                    opacity REAL NOT NULL DEFAULT 0.96,
+                    opacity REAL NOT NULL DEFAULT 1.0,
                     is_collapsed INTEGER NOT NULL DEFAULT 0,
                     is_locked INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
@@ -156,6 +161,49 @@ public sealed class SqliteStorageInitializer : IStorageInitializer
                 migration.CommandText = """
                     INSERT INTO schema_migrations(schema_version, migration_id, applied_at)
                     VALUES (1, '001_initial_local_backend', $appliedAt);
+                    """;
+                migration.Parameters.AddWithValue("$appliedAt", DateTimeOffset.UtcNow.ToString("O"));
+                await migration.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
+    }
+
+    private static async Task ApplyV2Async(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await using (var command = connection.CreateCommand())
+            {
+                command.Transaction = transaction;
+                command.CommandText = """
+                    CREATE TABLE IF NOT EXISTS recently_opened_items (
+                        item_id TEXT NOT NULL PRIMARY KEY,
+                        item_path TEXT NOT NULL,
+                        display_name TEXT NOT NULL,
+                        item_type TEXT NOT NULL,
+                        opened_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_recently_opened_items_opened_at
+                        ON recently_opened_items(opened_at DESC);
+                    """;
+                await command.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await using (var migration = connection.CreateCommand())
+            {
+                migration.Transaction = transaction;
+                migration.CommandText = """
+                    INSERT INTO schema_migrations(schema_version, migration_id, applied_at)
+                    VALUES (2, '002_recently_opened_items', $appliedAt);
                     """;
                 migration.Parameters.AddWithValue("$appliedAt", DateTimeOffset.UtcNow.ToString("O"));
                 await migration.ExecuteNonQueryAsync(cancellationToken);

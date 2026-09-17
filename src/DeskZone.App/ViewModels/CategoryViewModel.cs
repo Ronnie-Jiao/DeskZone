@@ -19,6 +19,8 @@ public sealed class CategoryViewModel : BindableBase
 
     public Guid Id => _model.Id;
     public string? Color => _model.Color;
+    public bool IsSystem => _model.IsSystem;
+    public bool IsRecentlyOpened => string.Equals(_model.SystemKey, SystemCategoryKeys.RecentlyOpened, StringComparison.Ordinal);
     public ObservableCollection<DesktopItemViewModel> Items { get; } = new();
 
     public string Name
@@ -49,6 +51,8 @@ public sealed class CategoryViewModel : BindableBase
         Name = model.Name;
         IsExpanded = !model.IsCollapsed;
         RaisePropertyChanged(nameof(Color));
+        RaisePropertyChanged(nameof(IsSystem));
+        RaisePropertyChanged(nameof(IsRecentlyOpened));
     }
 
     public void SetExpanded(bool expanded)
@@ -61,7 +65,26 @@ public sealed class CategoryViewModel : BindableBase
         Items.Clear();
         foreach (var item in items)
         {
-            Items.Add(new DesktopItemViewModel(item));
+            Items.Add(new DesktopItemViewModel(item, isRecentItem: IsRecentlyOpened));
+        }
+    }
+
+    public void MoveItem(int sourceIndex, int targetIndex)
+    {
+        if (sourceIndex < 0 || sourceIndex >= Items.Count || targetIndex < 0 || targetIndex >= Items.Count || sourceIndex == targetIndex)
+        {
+            return;
+        }
+
+        Items.Move(sourceIndex, targetIndex);
+    }
+
+    public void RestoreItems(IEnumerable<DesktopItemViewModel> items)
+    {
+        Items.Clear();
+        foreach (var item in items)
+        {
+            Items.Add(item);
         }
     }
 }

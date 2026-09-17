@@ -3,11 +3,15 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>DeskZone</AssemblyName>
     <RootNamespace>DeskZone.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\DeskZoneLogo.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <Resource Include="Assets\DeskZoneLogo.png" />
+    <Resource Include="Assets\DeskZoneLogoCompact.png" />
     <ProjectReference Include="../DeskZone.Core/DeskZone.Core.csproj" />
     <ProjectReference Include="../DeskZone.Shell/DeskZone.Shell.csproj" />
     <ProjectReference Include="../DeskZone.Storage/DeskZone.Storage.csproj" />

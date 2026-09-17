@@ -14,8 +14,12 @@ public sealed class CategoryService : ICategoryService
         _store = store;
     }
 
-    public Task<IReadOnlyList<Category>> ListAsync(CancellationToken cancellationToken = default) =>
-        _store.GetCategoriesAsync(includeSystem: false, cancellationToken);
+    public async Task<IReadOnlyList<Category>> ListAsync(CancellationToken cancellationToken = default)
+    {
+        var recent = await EnsureRecentlyOpenedCategoryAsync(cancellationToken);
+        var userCategories = await _store.GetCategoriesAsync(includeSystem: false, cancellationToken);
+        return new[] { recent }.Concat(userCategories).ToArray();
+    }
 
     public async Task<Category> CreateAsync(string name, string? color = null, CancellationToken cancellationToken = default)
     {
@@ -136,6 +140,30 @@ public sealed class CategoryService : ICategoryService
             true,
             "custom",
             SystemCategoryKeys.Unclassified,
+            now,
+            now);
+        await _store.InsertCategoryAsync(category, cancellationToken);
+        return category;
+    }
+
+    private async Task<Category> EnsureRecentlyOpenedCategoryAsync(CancellationToken cancellationToken)
+    {
+        var existing = await _store.GetSystemCategoryAsync(SystemCategoryKeys.RecentlyOpened, cancellationToken);
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var category = new Category(
+            Guid.NewGuid(),
+            "最近打开",
+            int.MinValue,
+            "grid",
+            "#126FF7",
+            false,
+            "recent",
+            SystemCategoryKeys.RecentlyOpened,
             now,
             now);
         await _store.InsertCategoryAsync(category, cancellationToken);

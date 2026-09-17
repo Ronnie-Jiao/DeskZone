@@ -21,10 +21,15 @@ public interface IWorkspaceStore
     Task<IReadOnlyList<DesktopItem>> GetItemsByCategoryAsync(Guid categoryId, CancellationToken cancellationToken = default);
     Task<DesktopItem?> GetItemAsync(Guid itemId, CancellationToken cancellationToken = default);
     Task<DesktopItem?> FindItemByOriginalPathAsync(string originalPath, DesktopItemMode mode, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<RecentOpenedItem>> GetRecentlyOpenedItemsAsync(int maximumCount, CancellationToken cancellationToken = default);
+    Task RecordRecentlyOpenedItemAsync(RecentOpenedItem item, CancellationToken cancellationToken = default);
     Task<int> GetNextItemOrderAsync(Guid categoryId, CancellationToken cancellationToken = default);
     Task InsertItemsAsync(IReadOnlyCollection<DesktopItem> items, CancellationToken cancellationToken = default);
+    Task ReorderItemsAsync(Guid categoryId, IReadOnlyList<Guid> orderedItemIds, CancellationToken cancellationToken = default);
+    Task UpdateItemAsync(DesktopItem item, CancellationToken cancellationToken = default);
     Task MoveItemsAsync(IReadOnlyCollection<Guid> itemIds, Guid targetCategoryId, CancellationToken cancellationToken = default);
     Task RemoveItemsAsync(IReadOnlyCollection<Guid> itemIds, CancellationToken cancellationToken = default);
+    Task DeleteItemsAsync(IReadOnlyCollection<Guid> itemIds, CancellationToken cancellationToken = default);
     Task SetItemMissingStateAsync(Guid itemId, bool isMissing, DateTimeOffset updatedAt, CancellationToken cancellationToken = default);
 
     Task<DesktopPanel?> GetPanelAsync(Guid panelId, CancellationToken cancellationToken = default);

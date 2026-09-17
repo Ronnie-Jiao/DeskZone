@@ -199,6 +199,56 @@ public sealed class SqliteWorkspaceStore : IWorkspaceStore
         return rows.FirstOrDefault();
     }
 
+    public async Task<IReadOnlyList<RecentOpenedItem>> GetRecentlyOpenedItemsAsync(
+        int maximumCount,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _connections.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT item_id, item_path, display_name, item_type, opened_at
+            FROM recently_opened_items
+            ORDER BY opened_at DESC
+            LIMIT $maximumCount;
+            """;
+        command.Parameters.AddWithValue("$maximumCount", Math.Clamp(maximumCount, 1, 10));
+
+        var result = new List<RecentOpenedItem>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            result.Add(new RecentOpenedItem(
+                Guid.Parse(reader.GetString(0)),
+                reader.GetString(1),
+                reader.GetString(2),
+                Enum.Parse<DesktopItemType>(reader.GetString(3), true),
+                ParseDate(reader.GetString(4))));
+        }
+
+        return result;
+    }
+
+    public async Task RecordRecentlyOpenedItemAsync(RecentOpenedItem item, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _connections.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO recently_opened_items(item_id, item_path, display_name, item_type, opened_at)
+            VALUES ($itemId, $itemPath, $displayName, $itemType, $openedAt)
+            ON CONFLICT(item_id) DO UPDATE SET
+                item_path = excluded.item_path,
+                display_name = excluded.display_name,
+                item_type = excluded.item_type,
+                opened_at = excluded.opened_at;
+            """;
+        command.Parameters.AddWithValue("$itemId", item.ItemId.ToString("D"));
+        command.Parameters.AddWithValue("$itemPath", item.Path);
+        command.Parameters.AddWithValue("$displayName", item.DisplayName);
+        command.Parameters.AddWithValue("$itemType", item.ItemType.ToString());
+        command.Parameters.AddWithValue("$openedAt", item.OpenedAt.ToString("O"));
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task<int> GetNextItemOrderAsync(Guid categoryId, CancellationToken cancellationToken = default)
     {
         await using var connection = await _connections.OpenAsync(cancellationToken);
@@ -236,6 +286,90 @@ public sealed class SqliteWorkspaceStore : IWorkspaceStore
         {
             await transaction.RollbackAsync(cancellationToken);
             throw;
+        }
+    }
+
+    public async Task ReorderItemsAsync(
+        Guid categoryId,
+        IReadOnlyList<Guid> orderedItemIds,
+        CancellationToken cancellationToken = default)
+    {
+        if (orderedItemIds.Count == 0)
+        {
+            return;
+        }
+
+        if (orderedItemIds.Distinct().Count() != orderedItemIds.Count)
+        {
+            throw new DeskZoneValidationException("项目排序失败：排序列表中包含重复项目。");
+        }
+
+        await using var connection = await _connections.OpenAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await using (var countCommand = connection.CreateCommand())
+            {
+                countCommand.Transaction = transaction;
+                countCommand.CommandText = "SELECT COUNT(*) FROM items WHERE category_id = $categoryId;";
+                countCommand.Parameters.AddWithValue("$categoryId", categoryId.ToString("D"));
+                var itemCount = Convert.ToInt32(await countCommand.ExecuteScalarAsync(cancellationToken));
+                if (itemCount != orderedItemIds.Count)
+                {
+                    throw new DeskZoneValidationException("项目排序失败：分类内容已发生变化，请重试。");
+                }
+            }
+
+            var updatedAt = DateTimeOffset.UtcNow.ToString("O");
+            for (var index = 0; index < orderedItemIds.Count; index++)
+            {
+                await using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = """
+                    UPDATE items
+                    SET custom_order = $customOrder, updated_at = $updatedAt
+                    WHERE id = $id AND category_id = $categoryId;
+                    """;
+                command.Parameters.AddWithValue("$customOrder", index);
+                command.Parameters.AddWithValue("$updatedAt", updatedAt);
+                command.Parameters.AddWithValue("$id", orderedItemIds[index].ToString("D"));
+                command.Parameters.AddWithValue("$categoryId", categoryId.ToString("D"));
+                if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
+                {
+                    throw new DeskZoneValidationException("项目排序失败：包含不存在或不属于当前分类的项目。");
+                }
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
+    }
+
+    public async Task UpdateItemAsync(DesktopItem item, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _connections.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE items
+            SET category_id = $categoryId,
+                item_mode = $itemMode,
+                original_path = $originalPath,
+                managed_path = $managedPath,
+                display_name = $displayName,
+                item_type = $itemType,
+                custom_order = $customOrder,
+                is_missing = $isMissing,
+                updated_at = $updatedAt
+            WHERE id = $id;
+            """;
+        AddItemParameters(command, item);
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
+        {
+            throw new DeskZoneValidationException("更新文件入口失败：目标入口不存在。");
         }
     }
 
@@ -294,6 +428,34 @@ public sealed class SqliteWorkspaceStore : IWorkspaceStore
                 await using var command = connection.CreateCommand();
                 command.Transaction = transaction;
                 command.CommandText = "DELETE FROM items WHERE id = $id AND item_mode = 'Reference';";
+                command.Parameters.AddWithValue("$id", itemId.ToString("D"));
+                await command.ExecuteNonQueryAsync(cancellationToken);
+            }
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
+    }
+
+    public async Task DeleteItemsAsync(IReadOnlyCollection<Guid> itemIds, CancellationToken cancellationToken = default)
+    {
+        if (itemIds.Count == 0)
+        {
+            return;
+        }
+
+        await using var connection = await _connections.OpenAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            foreach (var itemId in itemIds.Distinct())
+            {
+                await using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = "DELETE FROM items WHERE id = $id;";
                 command.Parameters.AddWithValue("$id", itemId.ToString("D"));
                 await command.ExecuteNonQueryAsync(cancellationToken);
             }

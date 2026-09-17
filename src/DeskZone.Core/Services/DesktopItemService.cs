@@ -8,16 +8,31 @@ namespace DeskZone.Core.Services;
 public sealed class DesktopItemService : IDesktopItemService
 {
     private readonly IWorkspaceStore _store;
+    private readonly string _managedStorageDirectory;
 
-    public DesktopItemService(IWorkspaceStore store)
+    public DesktopItemService(IWorkspaceStore store, string managedStorageDirectory)
     {
         _store = store;
+        _managedStorageDirectory = Path.GetFullPath(managedStorageDirectory);
     }
 
     public async Task<IReadOnlyList<DesktopItem>> ListByCategoryAsync(Guid categoryId, CancellationToken cancellationToken = default)
     {
         _ = await RequireCategoryAsync(categoryId, cancellationToken);
         return await _store.GetItemsByCategoryAsync(categoryId, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<RecentOpenedItem>> ListRecentlyOpenedAsync(
+        int maximumCount = 10,
+        CancellationToken cancellationToken = default) =>
+        _store.GetRecentlyOpenedItemsAsync(Math.Clamp(maximumCount, 1, 10), cancellationToken);
+
+    public Task RecordOpenedAsync(DesktopItem item, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        return _store.RecordRecentlyOpenedItemAsync(
+            new RecentOpenedItem(item.Id, item.ActivePath, item.DisplayName, item.ItemType, DateTimeOffset.UtcNow),
+            cancellationToken);
     }
 
     public async Task<AddReferencesResult> AddReferencesAsync(Guid categoryId, IEnumerable<string> paths, CancellationToken cancellationToken = default)
@@ -110,6 +125,223 @@ public sealed class DesktopItemService : IDesktopItemService
         }
 
         return new AddReferencesResult(newItems.Count, moved, already, failures);
+    }
+
+    public async Task ReorderAsync(
+        Guid categoryId,
+        IReadOnlyList<Guid> orderedItemIds,
+        CancellationToken cancellationToken = default)
+    {
+        _ = await RequireCategoryAsync(categoryId, cancellationToken);
+
+        if (orderedItemIds.Count == 0)
+        {
+            return;
+        }
+
+        var orderedIds = orderedItemIds.ToArray();
+        if (orderedIds.Distinct().Count() != orderedIds.Length)
+        {
+            throw new DeskZoneValidationException("项目排序失败：排序列表中包含重复项目。");
+        }
+
+        var items = await _store.GetItemsByCategoryAsync(categoryId, cancellationToken);
+        var existingIds = items.Select(item => item.Id).ToHashSet();
+        if (existingIds.Count != orderedIds.Length || orderedIds.Any(itemId => !existingIds.Contains(itemId)))
+        {
+            throw new DeskZoneValidationException("项目排序失败：分类内容已发生变化，请重试。");
+        }
+
+        await _store.ReorderItemsAsync(categoryId, orderedIds, cancellationToken);
+    }
+
+    public async Task<MoveItemsResult> MovePathsIntoCategoryAsync(
+        Guid categoryId,
+        IEnumerable<string> paths,
+        CancellationToken cancellationToken = default)
+    {
+        _ = await RequireCategoryAsync(categoryId, cancellationToken);
+
+        var failures = new List<AddReferenceFailure>();
+        var moved = 0;
+        var nextOrder = await _store.GetNextItemOrderAsync(categoryId, cancellationToken);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var targetDirectory = Path.Combine(_managedStorageDirectory, categoryId.ToString("N"));
+
+        foreach (var rawPath in paths ?? Array.Empty<string>())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            string fullPath;
+            try
+            {
+                fullPath = NormalizePath(rawPath);
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                failures.Add(new AddReferenceFailure(rawPath, "路径格式无效。"));
+                continue;
+            }
+
+            if (!seen.Add(fullPath))
+            {
+                continue;
+            }
+
+            var itemType = GetItemType(fullPath);
+            if (itemType is null)
+            {
+                failures.Add(new AddReferenceFailure(fullPath, "文件、文件夹或快捷方式不存在。"));
+                continue;
+            }
+
+            if (IsInsideDirectory(fullPath, _managedStorageDirectory))
+            {
+                failures.Add(new AddReferenceFailure(fullPath, "该项目已经位于 DeskZone 的收纳目录中。"));
+                continue;
+            }
+
+            var displayName = GetDisplayName(fullPath);
+            var existing = await _store.FindItemByOriginalPathAsync(fullPath, DesktopItemMode.Reference, cancellationToken);
+            var targetPath = string.Empty;
+            var movedOnDisk = false;
+
+            try
+            {
+                Directory.CreateDirectory(targetDirectory);
+                targetPath = GetUniqueDestinationPath(targetDirectory, displayName, itemType.Value == DesktopItemType.Folder);
+                MovePath(fullPath, targetPath);
+                movedOnDisk = true;
+
+                var now = DateTimeOffset.UtcNow;
+                if (existing is null)
+                {
+                    await _store.InsertItemsAsync(
+                        new[]
+                        {
+                            new DesktopItem(
+                                Guid.NewGuid(),
+                                categoryId,
+                                DesktopItemMode.Managed,
+                                fullPath,
+                                targetPath,
+                                Path.GetFileName(Path.TrimEndingDirectorySeparator(targetPath)),
+                                itemType.Value,
+                                nextOrder++,
+                                false,
+                                now,
+                                now)
+                        },
+                        cancellationToken);
+                }
+                else
+                {
+                    var updated = existing with
+                    {
+                        CategoryId = categoryId,
+                        ItemMode = DesktopItemMode.Managed,
+                        ManagedPath = targetPath,
+                        DisplayName = Path.GetFileName(Path.TrimEndingDirectorySeparator(targetPath)),
+                        ItemType = itemType.Value,
+                        CustomOrder = existing.CategoryId == categoryId ? existing.CustomOrder : nextOrder++,
+                        IsMissing = false,
+                        UpdatedAt = now
+                    };
+                    await _store.UpdateItemAsync(updated, cancellationToken);
+                }
+            }
+            catch (Exception ex)
+            {
+                if (movedOnDisk)
+                {
+                    TryMovePath(targetPath, fullPath);
+                }
+
+                failures.Add(new AddReferenceFailure(fullPath, ex.Message));
+                continue;
+            }
+
+            try
+            {
+                await LogAsync(
+                    OperationType.ManagedMove,
+                    fullPath,
+                    targetPath,
+                    new { categoryId, itemType },
+                    canUndo: true,
+                    cancellationToken);
+            }
+            catch
+            {
+                // The file and database state are already consistent; logging must not undo the move.
+            }
+
+            moved++;
+        }
+
+        return new MoveItemsResult(moved, failures);
+    }
+
+    public async Task MoveItemToDirectoryAsync(
+        Guid itemId,
+        string destinationDirectory,
+        CancellationToken cancellationToken = default)
+    {
+        var item = await _store.GetItemAsync(itemId, cancellationToken)
+            ?? throw new DeskZoneValidationException("要移动的文件入口不存在或已被移除。");
+
+        var sourcePath = NormalizePath(item.ActivePath);
+        var destinationRoot = Path.GetFullPath(destinationDirectory);
+        Directory.CreateDirectory(destinationRoot);
+
+        var sourceName = GetDisplayName(sourcePath);
+        var targetPath = Path.Combine(destinationRoot, sourceName);
+        var sourceExists = PathExists(sourcePath);
+        var samePath = PathsEqual(sourcePath, targetPath);
+        if (sourceExists && !samePath && PathExists(targetPath))
+        {
+            targetPath = GetUniqueDestinationPath(destinationRoot, sourceName, item.ItemType == DesktopItemType.Folder);
+        }
+
+        var movedOnDisk = false;
+        try
+        {
+            if (sourceExists && !samePath)
+            {
+                MovePath(sourcePath, targetPath);
+                movedOnDisk = true;
+            }
+            else if (!sourceExists && !PathExists(targetPath))
+            {
+                throw new FileNotFoundException("原项目已经不存在，无法移动到桌面。", sourcePath);
+            }
+
+            await _store.DeleteItemsAsync(new[] { item.Id }, cancellationToken);
+        }
+        catch
+        {
+            if (movedOnDisk)
+            {
+                TryMovePath(targetPath, sourcePath);
+            }
+
+            throw;
+        }
+
+        try
+        {
+            await LogAsync(
+                OperationType.ManagedMove,
+                sourcePath,
+                targetPath,
+                new { itemId, destination = destinationRoot },
+                canUndo: true,
+                cancellationToken);
+        }
+        catch
+        {
+            // The file and database state are already consistent; logging must not undo the move.
+        }
     }
 
     public async Task MoveToCategoryAsync(IReadOnlyCollection<Guid> itemIds, Guid targetCategoryId, CancellationToken cancellationToken = default)
@@ -231,6 +463,71 @@ public sealed class DesktopItemService : IDesktopItemService
             throw new ArgumentException("Path is empty.", nameof(path));
         }
         return Path.GetFullPath(path.Trim().Trim('"'));
+    }
+
+    private static bool PathExists(string path) => File.Exists(path) || Directory.Exists(path);
+
+    private static bool PathsEqual(string left, string right) =>
+        string.Equals(
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
+            StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsInsideDirectory(string path, string directory)
+    {
+        var normalizedPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        var normalizedDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
+        return PathsEqual(normalizedPath, normalizedDirectory) ||
+               normalizedPath.StartsWith(normalizedDirectory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string GetUniqueDestinationPath(string directory, string displayName, bool isDirectory)
+    {
+        var candidate = Path.Combine(directory, displayName);
+        if (!PathExists(candidate))
+        {
+            return candidate;
+        }
+
+        var stem = isDirectory ? displayName : Path.GetFileNameWithoutExtension(displayName);
+        var extension = isDirectory ? string.Empty : Path.GetExtension(displayName);
+        for (var index = 2; index < 10000; index++)
+        {
+            candidate = Path.Combine(directory, $"{stem} ({index}){extension}");
+            if (!PathExists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        throw new IOException($"目标目录中已经存在太多同名项目：{displayName}");
+    }
+
+    private static void MovePath(string sourcePath, string destinationPath)
+    {
+        if (Directory.Exists(sourcePath))
+        {
+            Directory.Move(sourcePath, destinationPath);
+        }
+        else
+        {
+            File.Move(sourcePath, destinationPath);
+        }
+    }
+
+    private static void TryMovePath(string sourcePath, string destinationPath)
+    {
+        try
+        {
+            if (PathExists(sourcePath) && !PathExists(destinationPath))
+            {
+                MovePath(sourcePath, destinationPath);
+            }
+        }
+        catch
+        {
+            // Best effort rollback; the caller still reports the original failure.
+        }
     }
 
     private static DesktopItemType? GetItemType(string fullPath)

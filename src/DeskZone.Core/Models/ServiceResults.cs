@@ -11,6 +11,10 @@ public sealed record AddReferencesResult(
     public int Accepted => Added + MovedFromOtherCategories + AlreadyInCategory;
 }
 
+public sealed record MoveItemsResult(
+    int Moved,
+    IReadOnlyList<AddReferenceFailure> Failures);
+
 public enum CategoryDeleteMode
 {
     RejectIfNotEmpty,
