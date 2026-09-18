@@ -23,7 +23,7 @@ DeskZone 不设计远程服务端。“后端”指客户端内部的 **Core + S
 
 ### Storage
 
-- SQLite：`Microsoft.Data.Sqlite 10.0.0`
+- SQLite：`Microsoft.Data.Sqlite 10.0.12`
 - 数据库：`%LOCALAPPDATA%\DeskZone\deskzone.db`
 - 设置：`%LOCALAPPDATA%\DeskZone\settings.json`
 - 备份：`%LOCALAPPDATA%\DeskZone\backups\`
@@ -63,14 +63,17 @@ DeskZone 不设计远程服务端。“后端”指客户端内部的 **Core + S
 
 `SqliteBackupService` 使用 SQLite Backup API 生成一致性数据库副本，并复制 `settings.json`。默认保留最近 8 份。
 
+### 文件变化监听
+
+`FileSystemChangeMonitor` 根据当前引用路径的父目录建立聚合式 `FileSystemWatcher`。分类或引用发生变化时会重建监听目录；收到文件系统事件后由 WPF 层防抖刷新引用的缺失状态。监听只更新本地引用状态，不移动、删除或上传真实文件。
+
 后续 Schema v2+ 迁移前会先触发本地备份。
 
 ## 尚未实现（按 Roadmap 顺序）
 
 ### Milestone 3 后续
 
-- Shell 图标 / 缩略图缓存。
-- 聚合式 `FileSystemWatcher`。
+- 缩略图缓存。
 - 文件重新定位。
 - Windows 原生右键菜单。
 

@@ -27,16 +27,19 @@
 - [x] SQLite Schema v1 / Migration / 本地持久化后端
 - [x] 分类服务层与安全删除语义
 - [x] WPF 工作区接入本地分类服务
+- [x] 分类拖动排序与顺序持久化
 
 ## Milestone 3 — 文件引用
 
 - [x] WPF Explorer FileDrop → Reference
 - [x] 文件、文件夹、快捷方式引用识别
-- [ ] Shell 图标 / 缩略图
+- [x] Windows Shell 图标
+- [ ] 缩略图缓存
 - [x] 双击使用 Windows Shell 打开
 - [ ] “打开所在位置”菜单
-- [x] 按需缺失文件状态刷新（Watcher 仍待接线）
-- [ ] 分类之间拖动引用
+- [x] 按需缺失文件状态刷新
+- [x] 聚合式目录监听与缺失状态自动刷新
+- [x] 分类之间拖动引用
 
 ## Milestone 4 — 文件安全
 
@@ -63,6 +66,6 @@
 
 1. Windows 10 / 11 真机验证 WorkerW 挂载、拖动和 Explorer 重启恢复。
 2. Shell 系统图标 / 缩略图。
-3. 分类排序与分类间拖动引用。
-4. 按目录聚合 FileSystemWatcher。
-5. 托盘与全局显示 / 隐藏快捷键。
+3. 缩略图缓存、原生“打开所在位置”和全局显示 / 隐藏快捷键。
+4. Windows 10 / 11、多显示器、DPI 与 Explorer 重启人工验收。
+5. 安全的真实文件收纳、冲突处理和撤销队列。

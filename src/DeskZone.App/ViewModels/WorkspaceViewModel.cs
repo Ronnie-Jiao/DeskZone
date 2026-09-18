@@ -367,6 +367,35 @@ public sealed class WorkspaceViewModel : BindableBase
         }
     }
 
+    public async Task<int> RefreshMissingStatesAsync(CancellationToken cancellationToken = default)
+    {
+        if (Categories.Count == 0)
+        {
+            return 0;
+        }
+
+        IsBusy = true;
+        try
+        {
+            var changed = 0;
+            foreach (var category in Categories.Where(category => !category.IsRecentlyOpened))
+            {
+                changed += await _backend.Items.RefreshMissingStateAsync(category.Id, cancellationToken);
+            }
+
+            if (changed > 0)
+            {
+                await ReloadAsync(cancellationToken);
+            }
+
+            return changed;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
     public async Task OpenItemAsync(DesktopItemViewModel item, CancellationToken cancellationToken = default)
     {
         if (item.IsMissing)
@@ -407,6 +436,11 @@ public sealed class WorkspaceViewModel : BindableBase
         }
 
         ApplySearchFilter();
+        _backend.FileSystemChanges.UpdatePaths(
+            Categories
+                .Where(category => !category.IsRecentlyOpened)
+                .SelectMany(category => category.Items)
+                .Select(item => item.Path));
     }
 
     private async Task ReloadRecentlyOpenedItemsAsync(CancellationToken cancellationToken)

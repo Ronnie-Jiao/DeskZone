@@ -82,6 +82,14 @@ public partial class App : System.Windows.Application
         }
     }
 
+    protected override void OnExit(ExitEventArgs e)
+    {
+        Backend?.Dispose();
+        _singleInstanceMutex?.Dispose();
+        _singleInstanceMutex = null;
+        base.OnExit(e);
+    }
+
     private static void SignalExistingInstance()
     {
         var currentProcessId = (uint)Environment.ProcessId;

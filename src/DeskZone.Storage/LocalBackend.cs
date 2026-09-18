@@ -16,7 +16,8 @@ public sealed class LocalBackend
         IDataTransferService dataTransfer,
         ICategoryService categories,
         IDesktopItemService items,
-        ILayoutService layout)
+        ILayoutService layout,
+        IFileSystemChangeMonitor fileSystemChanges)
     {
         Paths = paths;
         Initializer = initializer;
@@ -27,6 +28,7 @@ public sealed class LocalBackend
         Categories = categories;
         Items = items;
         Layout = layout;
+        FileSystemChanges = fileSystemChanges;
     }
 
     public DataPaths Paths { get; }
@@ -38,6 +40,7 @@ public sealed class LocalBackend
     public ICategoryService Categories { get; }
     public IDesktopItemService Items { get; }
     public ILayoutService Layout { get; }
+    public IFileSystemChangeMonitor FileSystemChanges { get; }
 
     public static LocalBackend CreateDefault()
     {
@@ -58,9 +61,12 @@ public sealed class LocalBackend
             dataTransfer,
             new CategoryService(workspace),
             new DesktopItemService(workspace, paths.ManagedStorageDirectory),
-            new LayoutService(workspace));
+            new LayoutService(workspace),
+            new FileSystemChangeMonitor());
     }
 
     public Task InitializeAsync(CancellationToken cancellationToken = default) =>
         Initializer.InitializeAsync(cancellationToken);
+
+    public void Dispose() => FileSystemChanges.Dispose();
 }

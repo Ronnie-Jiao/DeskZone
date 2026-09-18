@@ -41,6 +41,7 @@ Application/Core
 - `SqliteStorageInitializer`：Schema Migration、WAL、完整性检查。
 - `SqliteWorkspaceStore`：参数化 SQL 与批量事务。
 - `SqliteBackupService`：SQLite 一致性备份 + settings 本地备份。
+- `FileSystemChangeMonitor`：按引用父目录聚合监听文件系统变化，驱动缺失状态刷新。
 - `LocalBackend`：本地服务组合入口。
 
 真实文件收纳仍属于 Milestone 4，未在当前版本默认启用。

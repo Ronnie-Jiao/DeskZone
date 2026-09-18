@@ -103,6 +103,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _desktopHostTimer;
     private readonly DispatcherTimer _desktopRestoreTimer;
     private readonly DispatcherTimer _categoryClickTimer;
+    private readonly DispatcherTimer _fileSystemRefreshTimer;
     private Forms.NotifyIcon? _trayIcon;
     private Forms.ContextMenuStrip? _trayMenu;
     private Drawing.Icon? _trayIconImage;
@@ -173,8 +174,20 @@ public partial class MainWindow : Window
         };
         _categoryClickTimer.Tick += CategoryClickTimer_Tick;
 
+        _fileSystemRefreshTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(350)
+        };
+        _fileSystemRefreshTimer.Tick += FileSystemRefreshTimer_Tick;
+        _backend.FileSystemChanges.Changed += FileSystemChanges_Changed;
+
         InitializeTrayIcon();
-        Closed += (_, _) => DisposeTrayIcon();
+        Closed += (_, _) =>
+        {
+            _fileSystemRefreshTimer.Stop();
+            _backend.FileSystemChanges.Changed -= FileSystemChanges_Changed;
+            DisposeTrayIcon();
+        };
         SourceInitialized += MainWindow_SourceInitialized;
         StateChanged += MainWindow_StateChanged;
     }
@@ -520,6 +533,57 @@ public partial class MainWindow : Window
 
         SearchTextBox.Clear();
         e.Handled = true;
+    }
+
+    private void FileSystemChanges_Changed(object? sender, FileSystemChangeEventArgs e)
+    {
+        try
+        {
+            Dispatcher.BeginInvoke(
+                DispatcherPriority.Background,
+                new Action(() =>
+                {
+                    if (!IsLoaded || _handlingWindowClose)
+                    {
+                        return;
+                    }
+
+                    _fileSystemRefreshTimer.Stop();
+                    _fileSystemRefreshTimer.Start();
+                }));
+        }
+        catch (InvalidOperationException)
+        {
+            // The WPF dispatcher is already shutting down.
+        }
+    }
+
+    private async void FileSystemRefreshTimer_Tick(object? sender, EventArgs e)
+    {
+        _fileSystemRefreshTimer.Stop();
+        if (!IsLoaded || _handlingWindowClose)
+        {
+            return;
+        }
+
+        if (_viewModel.IsBusy)
+        {
+            _fileSystemRefreshTimer.Start();
+            return;
+        }
+
+        try
+        {
+            await _viewModel.RefreshMissingStatesAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            // A closing window or a newer reload superseded this refresh.
+        }
+        catch
+        {
+            // File-system notifications are best-effort and must not interrupt the panel.
+        }
     }
 
     private void NewCategory_DragEnter(object sender, DragEventArgs e) =>
