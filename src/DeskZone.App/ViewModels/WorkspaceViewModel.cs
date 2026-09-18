@@ -58,6 +58,22 @@ public sealed class WorkspaceViewModel : BindableBase
         return viewModel;
     }
 
+    public async Task ReloadFromStorageAsync(CancellationToken cancellationToken = default)
+    {
+        IsBusy = true;
+        try
+        {
+            await ReloadAsync(cancellationToken);
+            StatusMessage = Categories.Count == 0
+                ? "数据已导入，但还没有分类。"
+                : $"数据已导入，已加载 {Categories.Count} 个分类。";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
     public async Task<CategoryViewModel> CreateCategoryFromFolderAsync(
         string folderPath,
         CancellationToken cancellationToken = default)
@@ -128,6 +144,42 @@ public sealed class WorkspaceViewModel : BindableBase
 
         await _backend.Categories.SetCollapsedAsync(category.Id, !expanded, cancellationToken);
         category.SetExpanded(expanded);
+    }
+
+    public async Task ToggleAllCategoriesAsync(CancellationToken cancellationToken = default)
+    {
+        if (Categories.Count == 0)
+        {
+            return;
+        }
+
+        var expand = Categories.Any(category => !category.IsExpanded);
+        IsBusy = true;
+        try
+        {
+            foreach (var category in Categories)
+            {
+                if (category.IsSystem)
+                {
+                    category.SetExpanded(expand);
+                    continue;
+                }
+
+                if (category.IsExpanded == expand)
+                {
+                    continue;
+                }
+
+                await _backend.Categories.SetCollapsedAsync(category.Id, !expand, cancellationToken);
+                category.SetExpanded(expand);
+            }
+
+            StatusMessage = expand ? "已展开全部分类。" : "已折叠全部分类。";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     public async Task MoveCategoryAsync(

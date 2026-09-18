@@ -35,6 +35,13 @@
         <SolidColorBrush x:Key="FileItemBorderBrush" Color="Transparent" />
         <SolidColorBrush x:Key="NewCategorySurfaceBrush" Color="#33FCFEFF" />
         <SolidColorBrush x:Key="NewCategoryBorderBrush" Color="Transparent" />
+        <SolidColorBrush x:Key="SettingsDialogSurfaceBrush" Color="White" />
+        <SolidColorBrush x:Key="SettingsDialogBorderBrush" Color="#D9E8F5" />
+        <SolidColorBrush x:Key="SettingsItemSurfaceBrush" Color="#F7FBFF" />
+        <SolidColorBrush x:Key="SettingsItemBorderBrush" Color="#E1ECF6" />
+        <SolidColorBrush x:Key="SettingsActionSurfaceBrush" Color="#EEF8FF" />
+        <SolidColorBrush x:Key="SettingsActionBorderBrush" Color="#A9D3FA" />
+        <SolidColorBrush x:Key="SettingsResetBorderBrush" Color="#C9D9E8" />
         <Thickness x:Key="CategoryBorderThickness">0</Thickness>
         <Thickness x:Key="FileItemBorderThickness">0</Thickness>
         <Thickness x:Key="NewCategoryBorderThickness">0</Thickness>
@@ -104,6 +111,13 @@
             </Style.Triggers>
         </Style>
         <Style x:Key="CategoryOverflowButton" TargetType="Button" BasedOn="{StaticResource FlatIconButton}">
+            <!-- Fill the complete overflow column so the header's drag cursor
+                 cannot leak into the clickable menu area. -->
+            <Setter Property="Width" Value="30" />
+            <Setter Property="Height" Value="36" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="VerticalAlignment" Value="Stretch" />
+            <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type Button}">
@@ -153,8 +167,8 @@
         <Style x:Key="SettingsToggle" TargetType="CheckBox">
             <Setter Property="Margin" Value="0,0,0,8" />
             <Setter Property="Padding" Value="12,9" />
-            <Setter Property="Background" Value="#F7FBFF" />
-            <Setter Property="BorderBrush" Value="#E1ECF6" />
+            <Setter Property="Background" Value="{DynamicResource SettingsItemSurfaceBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SettingsItemBorderBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Focusable" Value="False" />
@@ -221,7 +235,8 @@
             <Grid Grid.Row="0"
                   x:Name="TitleBar"
                   Background="Transparent"
-                  MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                  Cursor="SizeAll"
+                  PreviewMouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
@@ -605,12 +620,15 @@
                     Grid.RowSpan="2"
                     Panel.ZIndex="50"
                     Visibility="Collapsed"
-                    Background="#5A12314A">
-                <Border Margin="14"
+                    Background="#5A12314A"
+                    Padding="14"
+                    SizeChanged="SettingsOverlay_SizeChanged">
+                <Border x:Name="SettingsDialog"
+                        HorizontalAlignment="Center"
                         Padding="14"
                         VerticalAlignment="Center"
-                        Background="White"
-                        BorderBrush="#D9E8F5"
+                        Background="{DynamicResource SettingsDialogSurfaceBrush}"
+                        BorderBrush="{DynamicResource SettingsDialogBorderBrush}"
                         BorderThickness="1"
                         CornerRadius="12">
                     <Grid>
@@ -630,10 +648,6 @@
                                            FontWeight="SemiBold"
                                            Foreground="{StaticResource TextBrush}"
                                            Text="设置" />
-                                <TextBlock Margin="0,3,0,0"
-                                           FontSize="10.5"
-                                           Foreground="{StaticResource MutedBrush}"
-                                           Text="所有配置仅保存在这台电脑上" />
                             </StackPanel>
                             <Button Grid.Column="1"
                                     Style="{StaticResource TitleIconButton}"
@@ -651,80 +665,63 @@
                                            FontWeight="SemiBold"
                                            Foreground="{StaticResource MutedBrush}"
                                            Text="桌面组件" />
-                                <Border Padding="12,9"
-                                        Margin="0,0,0,8"
-                                        Background="#EEF8FF"
-                                        BorderBrush="#B8DCF9"
-                                        BorderThickness="1"
-                                        CornerRadius="8">
-                                    <StackPanel>
-                                        <TextBlock FontWeight="SemiBold" Foreground="{StaticResource BrandBrush}" Text="已固定显示在桌面" />
-                                        <TextBlock Margin="0,2,0,0" FontSize="10.5" Foreground="{StaticResource MutedBrush}" Text="按 Win+D 返回桌面时，DeskZone 会与桌面图标一同保留。" TextWrapping="Wrap" />
-                                    </StackPanel>
-                                </Border>
                                 <CheckBox x:Name="SettingsLockPositionToggle"
                                           Style="{StaticResource SettingsToggle}"
-                                          Click="SettingsLockPosition_Click">
-                                    <StackPanel>
-                                        <TextBlock FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" Text="锁定窗口位置与大小" />
-                                        <TextBlock Margin="0,2,0,0" FontSize="10.5" Foreground="{StaticResource MutedBrush}" Text="关闭后无法拖动或调整边框" />
-                                    </StackPanel>
-                                </CheckBox>
+                                          Click="SettingsLockPosition_Click"
+                                          FontWeight="SemiBold"
+                                          Foreground="{StaticResource TextBrush}"
+                                          Content="锁定窗口位置与大小" />
+                                <CheckBox x:Name="SettingsStartWithWindowsToggle"
+                                          Style="{StaticResource SettingsToggle}"
+                                          Click="SettingsStartWithWindows_Click"
+                                          FontWeight="SemiBold"
+                                          Foreground="{StaticResource TextBrush}"
+                                          Content="开机自动启动" />
                                 <CheckBox x:Name="SettingsCloseToTrayToggle"
                                           Style="{StaticResource SettingsToggle}"
-                                          Click="SettingsCloseToTray_Click">
-                                    <StackPanel>
-                                        <TextBlock FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" Text="关闭时保留到通知区域" />
-                                        <TextBlock Margin="0,2,0,0" FontSize="10.5" Foreground="{StaticResource MutedBrush}" Text="关闭窗口后继续运行，可从右下角图标重新打开" />
-                                    </StackPanel>
-                                </CheckBox>
+                                          Click="SettingsCloseToTray_Click"
+                                          FontWeight="SemiBold"
+                                          Foreground="{StaticResource TextBrush}"
+                                          Content="关闭时保留到通知区域" />
 
                                 <TextBlock Margin="0,8,0,7"
                                            FontSize="11"
                                            FontWeight="SemiBold"
                                            Foreground="{StaticResource MutedBrush}"
-                                           Text="内容与数据" />
-                                <Border Padding="12,9"
-                                        Margin="0,0,0,8"
-                                        Background="#F7FBFF"
-                                        BorderBrush="#E1ECF6"
-                                        BorderThickness="1"
-                                        CornerRadius="8">
-                                    <StackPanel>
-                                        <TextBlock FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" Text="最近打开" />
-                                        <TextBlock Margin="0,2,0,0" FontSize="10.5" Foreground="{StaticResource MutedBrush}" Text="第一栏固定显示最近从 DeskZone 打开的 10 个项目。" TextWrapping="Wrap" />
-                                    </StackPanel>
-                                </Border>
-                                <Border Padding="12,9"
-                                        Margin="0,0,0,8"
-                                        Background="#F7FBFF"
-                                        BorderBrush="#E1ECF6"
-                                        BorderThickness="1"
-                                        CornerRadius="8">
-                                    <StackPanel>
-                                        <TextBlock FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" Text="本地数据目录" />
-                                        <TextBlock x:Name="SettingsDataPath"
-                                                   Margin="0,3,0,7"
-                                                   FontSize="10"
-                                                   Foreground="{StaticResource MutedBrush}"
-                                                   TextWrapping="Wrap" />
-                                        <Button HorizontalAlignment="Left"
-                                                Padding="9,4"
-                                                Background="#EEF8FF"
-                                                BorderBrush="#A9D3FA"
-                                                Foreground="{StaticResource BrandBrush}"
-                                                Cursor="Hand"
-                                                Content="打开数据文件夹"
-                                                Click="SettingsOpenDataFolder_Click" />
-                                    </StackPanel>
-                                </Border>
+                                           Text="数据" />
+                                <StackPanel Margin="0,0,0,8"
+                                            Orientation="Horizontal">
+                                    <Button Padding="9,5"
+                                            Margin="0,0,8,0"
+                                            Background="{DynamicResource SettingsActionSurfaceBrush}"
+                                            BorderBrush="{DynamicResource SettingsActionBorderBrush}"
+                                            Foreground="{StaticResource BrandBrush}"
+                                            Cursor="Hand"
+                                            Content="打开文件夹"
+                                            Click="SettingsOpenDataFolder_Click" />
+                                    <Button Padding="9,5"
+                                            Margin="0,0,8,0"
+                                            Background="{DynamicResource SettingsActionSurfaceBrush}"
+                                            BorderBrush="{DynamicResource SettingsActionBorderBrush}"
+                                            Foreground="{StaticResource BrandBrush}"
+                                            Cursor="Hand"
+                                            Content="导入"
+                                            Click="SettingsImportData_Click" />
+                                    <Button Padding="9,5"
+                                            Background="{DynamicResource SettingsActionSurfaceBrush}"
+                                            BorderBrush="{DynamicResource SettingsActionBorderBrush}"
+                                            Foreground="{StaticResource BrandBrush}"
+                                            Cursor="Hand"
+                                            Content="导出"
+                                            Click="SettingsExportData_Click" />
+                                </StackPanel>
                                 <Button Padding="10,7"
                                         HorizontalAlignment="Left"
                                         Background="Transparent"
-                                        BorderBrush="#C9D9E8"
+                                        BorderBrush="{DynamicResource SettingsResetBorderBrush}"
                                         Foreground="{StaticResource MutedBrush}"
                                         Cursor="Hand"
-                                        Content="恢复默认窗口大小"
+                                        Content="恢复窗口大小"
                                         Click="SettingsRestoreSize_Click" />
                             </StackPanel>
                         </ScrollViewer>

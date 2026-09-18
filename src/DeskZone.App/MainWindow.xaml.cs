@@ -10,6 +10,9 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
+using Microsoft.Win32;
+using WpfOpenFileDialog = Microsoft.Win32.OpenFileDialog;
+using WpfSaveFileDialog = Microsoft.Win32.SaveFileDialog;
 using DeskZone.App.ViewModels;
 using DeskZone.Core.Models;
 using DeskZone.Core.Services;
@@ -40,7 +43,10 @@ public partial class MainWindow : Window
     private const string InternalItemCategoryDataFormat = "DeskZone.ItemCategoryId";
     private const string InternalCategoryDataFormat = "DeskZone.CategoryId";
     private const string CloseToTraySettingKey = "close-to-tray";
+    private const string StartWithWindowsSettingKey = "start-with-windows";
     private const string TransparentModeSettingKey = "transparent-mode";
+    private const string WindowsStartupRegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string WindowsStartupRegistryValueName = "DeskZone";
     private const int WmSize = 0x0005;
     private const int SizeMinimized = 1;
 
@@ -84,6 +90,7 @@ public partial class MainWindow : Window
     private bool _desktopRestorePending;
     private bool _isPanelCollapsed;
     private bool _closeToTray = true;
+    private bool _startWithWindows;
     private bool _transparentMode = true;
     private double _expandedHeight = 650;
     private bool _applyingSettings;
@@ -93,6 +100,7 @@ public partial class MainWindow : Window
     private CategoryViewModel? _categoryDragCandidate;
     private Point _categoryDragStartPoint;
     private CategoryViewModel? _pendingCategoryToggle;
+    private bool _categoryShiftClick;
     private DateTimeOffset _panelCreatedAt = DateTimeOffset.UtcNow;
 
     public MainWindow(
@@ -288,6 +296,7 @@ public partial class MainWindow : Window
 
             var savedCloseToTray = await _backend.Settings.LoadAsync<bool?>(CloseToTraySettingKey);
             _closeToTray = savedCloseToTray ?? true;
+            await RestoreStartWithWindowsPreferenceAsync();
 
             var panel = await _backend.Layout.GetPanelAsync(PanelId);
             _panelCreatedAt = panel.CreatedAt;
@@ -448,7 +457,7 @@ public partial class MainWindow : Window
 
         try
         {
-            await _viewModel.ToggleCategoryAsync(category);
+            await HandleCategoryToggleAsync(category, IsShiftPressed());
         }
         catch (Exception ex)
         {
@@ -456,8 +465,23 @@ public partial class MainWindow : Window
         }
     }
 
+    private static bool IsShiftPressed() => (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
+
+    private async Task HandleCategoryToggleAsync(CategoryViewModel category, bool toggleAll)
+    {
+        if (toggleAll)
+        {
+            await _viewModel.ToggleAllCategoriesAsync();
+            return;
+        }
+
+        await _viewModel.ToggleCategoryAsync(category);
+    }
+
     private void CategoryHeader_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        _categoryShiftClick = false;
+
         if (sender is not FrameworkElement header || header.Tag is not CategoryViewModel category)
         {
             return;
@@ -472,10 +496,13 @@ public partial class MainWindow : Window
 
         _categoryDragCandidate = category;
         _categoryDragStartPoint = e.GetPosition(this);
+        _categoryShiftClick = IsShiftPressed();
     }
 
     private async void CategoryHeader_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
+        var shiftClick = _categoryShiftClick || IsShiftPressed();
+        _categoryShiftClick = false;
         var category = _categoryDragCandidate;
         _categoryDragCandidate = null;
 
@@ -493,13 +520,22 @@ public partial class MainWindow : Window
 
         if (textBox is not null)
         {
-            ScheduleCategoryToggle(category);
+            if (shiftClick)
+            {
+                CancelPendingCategoryToggle();
+                await HandleCategoryToggleFromInputAsync(category, toggleAll: true);
+            }
+            else
+            {
+                ScheduleCategoryToggle(category);
+            }
+
             return;
         }
 
         try
         {
-            await _viewModel.ToggleCategoryAsync(category);
+            await HandleCategoryToggleAsync(category, shiftClick);
         }
         catch (Exception ex)
         {
@@ -528,6 +564,7 @@ public partial class MainWindow : Window
 
         var category = _categoryDragCandidate;
         _categoryDragCandidate = null;
+        _categoryShiftClick = false;
 
         var data = new DataObject();
         data.SetData(InternalCategoryDataFormat, category.Id.ToString("D"));
@@ -547,6 +584,15 @@ public partial class MainWindow : Window
     {
         if (sender is not TextBox textBox || textBox.Tag is not CategoryViewModel category || !textBox.IsReadOnly)
         {
+            return;
+        }
+
+        if (IsShiftPressed())
+        {
+            _categoryShiftClick = true;
+            _categoryDragCandidate = category;
+            _categoryDragStartPoint = e.GetPosition(this);
+            e.Handled = true;
             return;
         }
 
@@ -583,13 +629,35 @@ public partial class MainWindow : Window
         }
 
         var candidate = _categoryDragCandidate;
+        var shiftClick = _categoryShiftClick || IsShiftPressed();
         _categoryDragCandidate = null;
+        _categoryShiftClick = false;
         if (candidate is not null)
         {
-            ScheduleCategoryToggle(category);
+            if (shiftClick)
+            {
+                CancelPendingCategoryToggle();
+                _ = HandleCategoryToggleFromInputAsync(category, toggleAll: true);
+            }
+            else
+            {
+                ScheduleCategoryToggle(category);
+            }
         }
 
         e.Handled = true;
+    }
+
+    private async Task HandleCategoryToggleFromInputAsync(CategoryViewModel category, bool toggleAll)
+    {
+        try
+        {
+            await HandleCategoryToggleAsync(category, toggleAll);
+        }
+        catch (Exception ex)
+        {
+            ShowError("更新分类失败", ex);
+        }
     }
 
     private void BeginCategoryNameEdit(TextBox textBox)
@@ -1183,6 +1251,27 @@ public partial class MainWindow : Window
         SetAppearanceBrush("NewCategoryBorderBrush", transparent
             ? Colors.Transparent
             : Color.FromRgb(0x79, 0xB8, 0xF8));
+        SetAppearanceBrush("SettingsDialogSurfaceBrush", transparent
+            ? Color.FromArgb(0xB8, 0xFC, 0xFE, 0xFF)
+            : Colors.White);
+        SetAppearanceBrush("SettingsDialogBorderBrush", transparent
+            ? Color.FromArgb(0x90, 0xFF, 0xFF, 0xFF)
+            : Color.FromRgb(0xD9, 0xE8, 0xF5));
+        SetAppearanceBrush("SettingsItemSurfaceBrush", transparent
+            ? Color.FromArgb(0x55, 0xFC, 0xFE, 0xFF)
+            : Color.FromRgb(0xF7, 0xFB, 0xFF));
+        SetAppearanceBrush("SettingsItemBorderBrush", transparent
+            ? Color.FromArgb(0x80, 0xFF, 0xFF, 0xFF)
+            : Color.FromRgb(0xE1, 0xEC, 0xF6));
+        SetAppearanceBrush("SettingsActionSurfaceBrush", transparent
+            ? Color.FromArgb(0x33, 0xEE, 0xF8, 0xFF)
+            : Color.FromRgb(0xEE, 0xF8, 0xFF));
+        SetAppearanceBrush("SettingsActionBorderBrush", transparent
+            ? Color.FromArgb(0x80, 0xA9, 0xD3, 0xFA)
+            : Color.FromRgb(0xA9, 0xD3, 0xFA));
+        SetAppearanceBrush("SettingsResetBorderBrush", transparent
+            ? Color.FromArgb(0x80, 0xFF, 0xFF, 0xFF)
+            : Color.FromRgb(0xC9, 0xD9, 0xE8));
 
         Resources["CategoryBorderThickness"] = new Thickness(transparent ? 0 : 1);
         Resources["FileItemBorderThickness"] = new Thickness(0);
@@ -1236,8 +1325,25 @@ public partial class MainWindow : Window
 
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
+        // Refresh the dialog resources when it is opened so the preview always
+        // follows the current appearance mode, including after an external
+        // settings reload or a long-lived desktop-component session.
+        ApplyAppearance(_transparentMode);
         SettingsOverlay.Visibility = Visibility.Visible;
         SyncSettingsControls();
+    }
+
+    private void SettingsOverlay_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (SettingsDialog is null || e.NewSize.Width <= 0)
+        {
+            return;
+        }
+
+        // Keep the dialog exactly centered inside the same content area as the
+        // desktop component. The overlay has symmetric padding, so the dialog
+        // width must match the available inner width after that padding.
+        SettingsDialog.Width = Math.Max(0, e.NewSize.Width - SettingsOverlay.Padding.Left - SettingsOverlay.Padding.Right);
     }
 
     private void SettingsClose_Click(object sender, RoutedEventArgs e) =>
@@ -1272,6 +1378,39 @@ public partial class MainWindow : Window
         SyncSettingsControls();
     }
 
+    private async void SettingsStartWithWindows_Click(object sender, RoutedEventArgs e)
+    {
+        if (_applyingSettings || sender is not System.Windows.Controls.CheckBox toggle)
+        {
+            return;
+        }
+
+        var requestedValue = toggle.IsChecked == true;
+        var previousValue = _startWithWindows;
+        try
+        {
+            SetWindowsStartupRegistration(requestedValue);
+            await _backend.Settings.SaveAsync(StartWithWindowsSettingKey, requestedValue);
+            _startWithWindows = requestedValue;
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                SetWindowsStartupRegistration(previousValue);
+            }
+            catch
+            {
+                // The original error is the useful one to show to the user.
+            }
+
+            _startWithWindows = previousValue;
+            ShowError("设置开机自动启动失败", ex);
+        }
+
+        SyncSettingsControls();
+    }
+
     private void SettingsOpenDataFolder_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -1286,6 +1425,122 @@ public partial class MainWindow : Window
         {
             ShowError("打开数据文件夹失败", ex);
         }
+    }
+
+    private async void SettingsExportData_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new WpfSaveFileDialog
+        {
+            Title = "导出 DeskZone 数据",
+            Filter = "DeskZone 数据文件 (*.deskzone.zip)|*.deskzone.zip|ZIP 文件 (*.zip)|*.zip",
+            DefaultExt = ".deskzone.zip",
+            AddExtension = true,
+            FileName = $"DeskZone-数据-{DateTime.Now:yyyyMMdd-HHmmss}.deskzone.zip",
+            OverwritePrompt = true
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            await _backend.DataTransfer.ExportAsync(dialog.FileName);
+            MessageBox.Show(
+                this,
+                "数据已导出。分类、快捷方式引用、布局和应用设置都已包含在数据文件中。",
+                "导出完成",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            ShowError("导出数据失败", ex);
+        }
+    }
+
+    private async void SettingsImportData_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new WpfOpenFileDialog
+        {
+            Title = "导入 DeskZone 数据",
+            Filter = "DeskZone 数据文件 (*.deskzone.zip;*.zip)|*.deskzone.zip;*.zip|所有文件 (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        var confirm = MessageBox.Show(
+            this,
+            "导入会替换当前分类、快捷方式引用、布局和应用设置。导入前会自动备份当前数据，是否继续？",
+            "确认导入数据",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+        if (confirm != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            await _backend.DataTransfer.ImportAsync(dialog.FileName);
+            await _backend.Initializer.InitializeAsync();
+            await ApplyImportedStateAsync();
+
+            SettingsOverlay.Visibility = Visibility.Collapsed;
+            MessageBox.Show(
+                this,
+                "数据已导入并生效。原有数据已在本地备份中保留。",
+                "导入完成",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            ShowError("导入数据失败，原有数据可能未被修改", ex);
+        }
+    }
+
+    private async Task ApplyImportedStateAsync()
+    {
+        var savedTransparentMode = await _backend.Settings.LoadAsync<bool?>(TransparentModeSettingKey);
+        _transparentMode = savedTransparentMode ?? _transparentMode;
+        ApplyAppearance(_transparentMode);
+
+        var savedCloseToTray = await _backend.Settings.LoadAsync<bool?>(CloseToTraySettingKey);
+        _closeToTray = savedCloseToTray ?? _closeToTray;
+        await RestoreStartWithWindowsPreferenceAsync();
+
+        var panel = await _backend.Layout.GetPanelAsync(PanelId);
+        if (panel is not null)
+        {
+            _applyingLayout = true;
+            try
+            {
+                Width = Math.Max(MinWidth, panel.WidthDip);
+                Height = Math.Max(430, panel.HeightDip);
+                _expandedHeight = Height;
+                Left = panel.LeftDip;
+                Top = panel.TopDip;
+                _panelCreatedAt = panel.CreatedAt;
+                ApplyLockedState(panel.IsLocked, scheduleSave: false);
+                ApplyPanelCollapsed(panel.IsCollapsed, restoreExpandedHeight: false);
+            }
+            finally
+            {
+                _applyingLayout = false;
+            }
+        }
+
+        await _viewModel.ReloadFromStorageAsync();
+        SyncSettingsControls();
+        EnsureDesktopAttachment();
     }
 
     private void SettingsRestoreSize_Click(object sender, RoutedEventArgs e)
@@ -1325,12 +1580,64 @@ public partial class MainWindow : Window
         {
             SettingsLockPositionToggle.IsChecked = _locked;
             SettingsCloseToTrayToggle.IsChecked = _closeToTray;
-            SettingsDataPath.Text = _backend.Paths.RootDirectory;
+            SettingsStartWithWindowsToggle.IsChecked = _startWithWindows;
         }
         finally
         {
             _applyingSettings = false;
         }
+    }
+
+    private async Task RestoreStartWithWindowsPreferenceAsync()
+    {
+        var savedValue = await _backend.Settings.LoadAsync<bool?>(StartWithWindowsSettingKey);
+        if (savedValue is null)
+        {
+            _startWithWindows = IsWindowsStartupRegistered();
+            return;
+        }
+
+        try
+        {
+            SetWindowsStartupRegistration(savedValue.Value);
+            _startWithWindows = savedValue.Value;
+        }
+        catch
+        {
+            // A stale or manually edited startup entry should not prevent DeskZone
+            // from opening. Keep the setting UI aligned with the actual registry state.
+            _startWithWindows = IsWindowsStartupRegistered();
+        }
+    }
+
+    private static bool IsWindowsStartupRegistered()
+    {
+        using var startupKey = Registry.CurrentUser.OpenSubKey(WindowsStartupRegistryPath, writable: false);
+        return startupKey?.GetValue(WindowsStartupRegistryValueName) is string command &&
+            !string.IsNullOrWhiteSpace(command);
+    }
+
+    private static void SetWindowsStartupRegistration(bool enabled)
+    {
+        if (!enabled)
+        {
+            using var existingKey = Registry.CurrentUser.OpenSubKey(WindowsStartupRegistryPath, writable: true);
+            existingKey?.DeleteValue(WindowsStartupRegistryValueName, throwOnMissingValue: false);
+            return;
+        }
+
+        var executablePath = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(executablePath) || !Path.IsPathFullyQualified(executablePath))
+        {
+            throw new InvalidOperationException("无法确定 DeskZone 的可执行文件路径。");
+        }
+
+        using var startupKey = Registry.CurrentUser.CreateSubKey(WindowsStartupRegistryPath, writable: true)
+            ?? throw new InvalidOperationException("无法访问 Windows 的开机启动配置。");
+        startupKey.SetValue(
+            WindowsStartupRegistryValueName,
+            $"\"{executablePath}\"",
+            RegistryValueKind.String);
     }
 
     private void ApplyLockedState(bool locked, bool scheduleSave = true)

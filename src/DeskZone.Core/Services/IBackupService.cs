@@ -4,6 +4,7 @@ public enum BackupReason
 {
     Manual,
     BeforeMigration,
+    BeforeImport,
     UpgradeStartup,
     DailyStartup
 }
