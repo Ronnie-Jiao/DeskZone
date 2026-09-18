@@ -49,6 +49,10 @@ public partial class MainWindow : Window
     private const string WindowsStartupRegistryValueName = "DeskZone";
     private const int WmSize = 0x0005;
     private const int SizeMinimized = 1;
+    private const uint SwpNoSize = 0x0001;
+    private const uint SwpNoZOrder = 0x0004;
+    private const uint SwpNoActivate = 0x0010;
+    private const uint SwpShowWindow = 0x0040;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct ScreenPoint
@@ -57,8 +61,30 @@ public partial class MainWindow : Window
         public int Y;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WindowRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
     [DllImport("user32.dll")]
     private static extern bool GetCursorPos(out ScreenPoint point);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool GetWindowRect(IntPtr windowHandle, out WindowRect rect);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetWindowPos(
+        IntPtr windowHandle,
+        IntPtr insertAfter,
+        int x,
+        int y,
+        int width,
+        int height,
+        uint flags);
 
     [DllImport("user32.dll")]
     private static extern uint GetDoubleClickTime();
@@ -85,6 +111,9 @@ public partial class MainWindow : Window
     private bool _applyingLayout;
     private bool _allowClose;
     private bool _handlingWindowClose;
+    private bool _isTitleBarDragging;
+    private ScreenPoint _titleBarDragStartCursor;
+    private WindowRect _titleBarDragStartWindow;
     private bool _desktopPinned;
     private bool _userRequestedMinimize;
     private bool _desktopRestorePending;
@@ -394,14 +423,69 @@ public partial class MainWindow : Window
             return;
         }
 
-        try
+        var handle = new WindowInteropHelper(this).Handle;
+        if (handle == IntPtr.Zero || !GetCursorPos(out _titleBarDragStartCursor) ||
+            !GetWindowRect(handle, out _titleBarDragStartWindow))
         {
-            DragMove();
+            return;
         }
-        catch (InvalidOperationException)
+
+        _isTitleBarDragging = true;
+        Mouse.Capture(TitleBar, CaptureMode.SubTree);
+        e.Handled = true;
+    }
+
+    private void TitleBar_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_isTitleBarDragging)
         {
-            // The mouse can be released between the event and DragMove on a busy desktop.
+            return;
         }
+
+        if (e.LeftButton != MouseButtonState.Pressed)
+        {
+            EndTitleBarDrag();
+            return;
+        }
+
+        if (GetCursorPos(out var cursor))
+        {
+            var handle = new WindowInteropHelper(this).Handle;
+            var x = _titleBarDragStartWindow.Left + cursor.X - _titleBarDragStartCursor.X;
+            var y = _titleBarDragStartWindow.Top + cursor.Y - _titleBarDragStartCursor.Y;
+            _ = SetWindowPos(
+                handle,
+                IntPtr.Zero,
+                x,
+                y,
+                0,
+                0,
+                SwpNoSize | SwpNoZOrder | SwpNoActivate | SwpShowWindow);
+        }
+
+        e.Handled = true;
+    }
+
+    private void TitleBar_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_isTitleBarDragging)
+        {
+            return;
+        }
+
+        EndTitleBarDrag();
+        e.Handled = true;
+    }
+
+    private void EndTitleBarDrag()
+    {
+        _isTitleBarDragging = false;
+        if (Mouse.Captured == TitleBar)
+        {
+            Mouse.Capture(null);
+        }
+
+        ScheduleLayoutSave();
     }
 
     private async void NewCategory_Click(object sender, RoutedEventArgs e)

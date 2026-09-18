@@ -236,7 +236,9 @@
                   x:Name="TitleBar"
                   Background="Transparent"
                   Cursor="SizeAll"
-                  PreviewMouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                  PreviewMouseLeftButtonDown="TitleBar_MouseLeftButtonDown"
+                  PreviewMouseMove="TitleBar_MouseMove"
+                  PreviewMouseLeftButtonUp="TitleBar_MouseLeftButtonUp">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
