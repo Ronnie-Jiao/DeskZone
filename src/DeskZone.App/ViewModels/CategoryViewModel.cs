@@ -46,7 +46,8 @@ public sealed class CategoryViewModel : BindableBase
 
     public string ToggleGlyph => IsExpandedForDisplay ? "▾" : "▸";
 
-    public bool IsVisible => !_isSearchActive || VisibleItems.Count > 0;
+    // "最近打开"只是其他分类项目的快捷汇总，搜索时不重复展示它。
+    public bool IsVisible => !_isSearchActive || (!IsRecentlyOpened && VisibleItems.Count > 0);
 
     public bool IsExpandedForDisplay => IsExpanded || (_isSearchActive && VisibleItems.Count > 0);
 
