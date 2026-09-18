@@ -4,28 +4,33 @@ using DeskZone.Core.Services;
 namespace DeskZone.Shell;
 
 /// <summary>
-/// Keeps DeskZone as a lightweight desktop component. It remains a top-level
-/// surface so Explorer cannot paint over it, is owned by the desktop shell,
-/// and is placed directly above the desktop but below ordinary app windows.
+/// Keeps DeskZone as a lightweight desktop component by making its HWND a real
+/// child of the desktop WorkerW surface. It therefore stays visible on the
+/// desktop without occupying the global topmost window band.
 /// </summary>
 public sealed class WindowsDesktopHostService : IDesktopHostService
 {
     private const int SmCxScreen = 0;
     private const int SmCyScreen = 1;
     private const int GwlExStyle = -20;
+    private const int GwlStyle = -16;
     private const int GwlHwndParent = -8;
-    private const uint GwOwner = 4;
     private const long WsExToolWindow = 0x00000080L;
+    private const long WsChild = 0x40000000L;
+    private const long WsPopup = unchecked((long)0x80000000);
+    private const uint SwpNoZOrder = 0x0004;
     private const int ShowWindowNoActivateCommand = 4;
     private const uint SetWindowPosNoSize = 0x0001;
     private const uint SetWindowPosNoActivate = 0x0010;
     private const uint SetWindowPosFrameChanged = 0x0020;
     private const uint SetWindowPosShowWindow = 0x0040;
-    private static readonly IntPtr HwndNoTopMost = new(-2);
+    private const uint ProgmanWorkerMessage = 0x052C;
+    private const uint SendMessageTimeoutAbortIfHung = 0x0002;
 
     private IntPtr _attachedWindow;
     private IntPtr _desktopOwner;
     private IntPtr _previousOwner;
+    private long _previousWindowStyle;
     private long _previousExtendedStyle;
 
     public bool TryAttach(IntPtr windowHandle)
@@ -54,9 +59,12 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
         var top = Math.Clamp(windowRect.Top, 0, Math.Max(0, screenHeight - panelHeight));
 
         var previousOwner = GetParent(windowHandle);
+        var previousWindowStyle = GetWindowLongPtr(windowHandle, GwlStyle).ToInt64();
         var previousExtendedStyle = GetWindowLongPtr(windowHandle, GwlExStyle).ToInt64();
+        var componentWindowStyle = (previousWindowStyle | WsChild) & ~WsPopup;
         var componentExtendedStyle = previousExtendedStyle | WsExToolWindow;
 
+        _ = SetWindowLongPtr(windowHandle, GwlStyle, new IntPtr(componentWindowStyle));
         _ = SetWindowLongPtr(windowHandle, GwlExStyle, new IntPtr(componentExtendedStyle));
         _ = SetWindowLongPtr(windowHandle, GwlHwndParent, desktopOwner);
 
@@ -73,24 +81,26 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
                 SetWindowPosNoActivate |
                 SetWindowPosFrameChanged))
         {
-            RestoreTopLevelWindow(windowHandle, previousOwner, previousExtendedStyle, windowRect);
+            RestoreTopLevelWindow(windowHandle, previousOwner, previousWindowStyle, previousExtendedStyle, windowRect);
             return false;
         }
 
-        // FrameChanged can reset z-order on this Explorer build, so apply the
-        // component layer in a separate call after style recalculation.
+        // A real child of WorkerW is not included in Win+D's top-level window
+        // hiding pass. Keep it below normal application windows without using
+        // the global topmost band.
         if (!SetWindowPos(
                 windowHandle,
-                HwndNoTopMost,
+                IntPtr.Zero,
                 left,
                 top,
                 0,
                 0,
                 SetWindowPosNoSize |
                 SetWindowPosNoActivate |
+                SwpNoZOrder |
                 SetWindowPosShowWindow))
         {
-            RestoreTopLevelWindow(windowHandle, previousOwner, previousExtendedStyle, windowRect);
+            RestoreTopLevelWindow(windowHandle, previousOwner, previousWindowStyle, previousExtendedStyle, windowRect);
             return false;
         }
 
@@ -98,6 +108,7 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
         _attachedWindow = windowHandle;
         _desktopOwner = desktopOwner;
         _previousOwner = previousOwner;
+        _previousWindowStyle = previousWindowStyle;
         _previousExtendedStyle = previousExtendedStyle;
         return true;
     }
@@ -120,7 +131,7 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
             return false;
         }
 
-        RestoreTopLevelWindow(windowHandle, _previousOwner, _previousExtendedStyle, screenRect);
+        RestoreTopLevelWindow(windowHandle, _previousOwner, _previousWindowStyle, _previousExtendedStyle, screenRect);
         ClearAttachment();
         return true;
     }
@@ -139,18 +150,19 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
             return false;
         }
 
-        if (GetWindow(windowHandle, GwOwner) == _desktopOwner)
+        if (GetParent(windowHandle) == _desktopOwner)
         {
             if (!GetWindowRect(windowHandle, out var rect) ||
                 !SetWindowPos(
                     windowHandle,
-                    HwndNoTopMost,
+                    IntPtr.Zero,
                     rect.Left,
                     rect.Top,
                     0,
                     0,
                     SetWindowPosNoSize |
                     SetWindowPosNoActivate |
+                    SwpNoZOrder |
                     SetWindowPosShowWindow))
             {
                 ClearAttachment();
@@ -167,17 +179,41 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
 
     private static IntPtr FindDesktopShellWindow()
     {
+        var progman = FindWindow("Progman", "Program Manager");
+        if (progman != IntPtr.Zero)
+        {
+            _ = SendMessageTimeout(
+                progman,
+                ProgmanWorkerMessage,
+                IntPtr.Zero,
+                IntPtr.Zero,
+                SendMessageTimeoutAbortIfHung,
+                1000,
+                out _);
+        }
+
         var desktopShellWindow = IntPtr.Zero;
         _ = EnumWindows((topLevelWindow, _) =>
         {
             var desktopView = FindWindowEx(topLevelWindow, IntPtr.Zero, "SHELLDLL_DefView", null);
-            if (desktopView == IntPtr.Zero || !IsUsableDesktopHost(topLevelWindow))
+            if (desktopView == IntPtr.Zero)
             {
                 return true;
             }
 
-            desktopShellWindow = topLevelWindow;
-            return false;
+            var workerWindow = FindWindowEx(IntPtr.Zero, topLevelWindow, "WorkerW", null);
+            if (workerWindow != IntPtr.Zero && IsUsableDesktopHost(workerWindow))
+            {
+                desktopShellWindow = workerWindow;
+                return false;
+            }
+
+            if (desktopShellWindow == IntPtr.Zero && IsUsableDesktopHost(topLevelWindow))
+            {
+                desktopShellWindow = topLevelWindow;
+            }
+
+            return true;
         }, IntPtr.Zero);
 
         return desktopShellWindow;
@@ -198,9 +234,15 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
                width >= screenWidth / 2 && height >= screenHeight / 2;
     }
 
-    private static void RestoreTopLevelWindow(IntPtr windowHandle, IntPtr previousOwner, long previousExtendedStyle, Rect screenRect)
+    private static void RestoreTopLevelWindow(
+        IntPtr windowHandle,
+        IntPtr previousOwner,
+        long previousWindowStyle,
+        long previousExtendedStyle,
+        Rect screenRect)
     {
         _ = SetWindowLongPtr(windowHandle, GwlHwndParent, previousOwner);
+        _ = SetWindowLongPtr(windowHandle, GwlStyle, new IntPtr(previousWindowStyle));
         _ = SetWindowLongPtr(windowHandle, GwlExStyle, new IntPtr(previousExtendedStyle));
         _ = SetWindowPos(
             windowHandle,
@@ -220,6 +262,7 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
         _attachedWindow = IntPtr.Zero;
         _desktopOwner = IntPtr.Zero;
         _previousOwner = IntPtr.Zero;
+        _previousWindowStyle = 0;
         _previousExtendedStyle = 0;
     }
 
@@ -241,11 +284,21 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern IntPtr FindWindowEx(IntPtr parentWindow, IntPtr childAfter, string className, string? windowName);
 
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern IntPtr GetParent(IntPtr windowHandle);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr FindWindow(string? className, string? windowName);
 
     [DllImport("user32.dll", SetLastError = true)]
-    private static extern IntPtr GetWindow(IntPtr windowHandle, uint command);
+    private static extern IntPtr SendMessageTimeout(
+        IntPtr windowHandle,
+        uint message,
+        IntPtr wParam,
+        IntPtr lParam,
+        uint flags,
+        uint timeout,
+        out IntPtr result);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr GetParent(IntPtr windowHandle);
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
     private static extern IntPtr GetWindowLongPtr(IntPtr windowHandle, int index);

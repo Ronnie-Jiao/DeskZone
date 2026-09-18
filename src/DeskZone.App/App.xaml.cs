@@ -1,5 +1,4 @@
 using System.Windows;
-using System.Linq;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using DeskZone.Shell;
@@ -65,14 +64,10 @@ public partial class App : System.Windows.Application
             Backend = LocalBackend.CreateDefault();
             await Backend.InitializeAsync();
 
-            var previewMode = e.Args.Any(argument =>
-                string.Equals(argument, "--preview", StringComparison.OrdinalIgnoreCase));
-
             var window = new MainWindow(
                 Backend,
                 new WindowsShellService(),
-                new WindowsDesktopHostService(),
-                previewMode);
+                new WindowsDesktopHostService());
             MainWindow = window;
             window.Show();
         }

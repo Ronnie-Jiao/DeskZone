@@ -52,8 +52,8 @@ Application/Core
 
 1. 向 `Progman` 发送 WorkerW 初始化消息。
 2. 查找承载 `SHELLDLL_DefView` 的窗口与其后方 WorkerW。
-3. 使用 `SetParent` 将 DeskZone HWND 挂载到桌面宿主。
-4. 不使用 `TopMost` 模拟桌面常驻。
-5. UI 层每 5 秒做一次轻量宿主健康检查；正常挂载时只检查 HWND / parent，只有 WorkerW 失效时才重新枚举 Shell 窗口。
+3. 将 DeskZone HWND 改为 `WS_CHILD`，真正挂载到桌面宿主。
+4. 不使用 `TopMost` 模拟桌面常驻；真正的桌面子窗口不会被 `Win+D` 的顶层窗口隐藏流程一起收起。
+5. UI 层每 500 毫秒做一次轻量宿主健康检查；正常挂载时只检查 HWND / parent，只有 WorkerW 失效时才重新枚举 Shell 窗口。启动参数不会切换到普通窗口模式，旧版 `--preview` 参数也会按桌面组件处理。
 
 该实现为 v1，需要在 Windows 10 / 11、多显示器、Explorer 重启和不同 DPI 模式下继续做人工兼容性验收。

@@ -17,4 +17,7 @@ public sealed class WindowsShellService : IShellService
         Process.Start(new ProcessStartInfo("explorer.exe", argument) { UseShellExecute = true });
         return Task.CompletedTask;
     }
+
+    public bool ShowContextMenu(string path, IntPtr ownerWindowHandle, int screenX, int screenY) =>
+        WindowsShellContextMenuService.TryShow(path, ownerWindowHandle, screenX, screenY);
 }

@@ -468,6 +468,7 @@
                                                              AllowDrop="{Binding CanReorder}"
                                                              MouseLeftButtonDown="FileCard_MouseLeftButtonDown"
                                                              MouseLeftButtonUp="FileCard_MouseLeftButtonUp"
+                                                             MouseRightButtonUp="FileCard_MouseRightButtonUp"
                                                              MouseMove="FileCard_MouseMove"
                                                              DragEnter="FileCard_DragEnter"
                                                              DragOver="FileCard_DragOver"

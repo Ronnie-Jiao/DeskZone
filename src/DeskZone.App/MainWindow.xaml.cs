@@ -64,9 +64,9 @@ public partial class MainWindow : Window
     private static extern int GetClassName(IntPtr windowHandle, StringBuilder className, int maxCount);
 
     private readonly LocalBackend _backend;
+    private readonly IShellService _shell;
     private readonly WorkspaceViewModel _viewModel;
     private readonly IDesktopHostService _desktopHost;
-    private readonly bool _previewMode;
     private readonly DispatcherTimer _layoutSaveTimer;
     private readonly DispatcherTimer _desktopHostTimer;
     private readonly DispatcherTimer _desktopRestoreTimer;
@@ -98,23 +98,15 @@ public partial class MainWindow : Window
     public MainWindow(
         LocalBackend backend,
         IShellService shell,
-        IDesktopHostService desktopHost,
-        bool previewMode = false)
+        IDesktopHostService desktopHost)
     {
         InitializeComponent();
 
         _backend = backend;
+        _shell = shell;
         _desktopHost = desktopHost;
-        _previewMode = previewMode;
         _viewModel = new WorkspaceViewModel(backend, shell);
         DataContext = _viewModel;
-
-        if (_previewMode)
-        {
-            WindowStyle = WindowStyle.None;
-            WindowStartupLocation = WindowStartupLocation.CenterScreen;
-            ShowInTaskbar = true;
-        }
 
         _layoutSaveTimer = new DispatcherTimer
         {
@@ -286,12 +278,13 @@ public partial class MainWindow : Window
             _transparentMode = savedTransparentMode ?? true;
             ApplyAppearance(_transparentMode);
 
-            // DeskZone is a desktop component, not a switchable window mode.
-            // Preview remains the only development-only floating surface.
-            _desktopPinned = !_previewMode;
-            // WPF owns the durable top-level state. Native SetWindowPos alone
-            // gets overwritten during WPF's final window initialization.
-            Topmost = _desktopPinned;
+            // DeskZone is always a desktop component. There is no alternate
+            // floating-window mode, including when an older shortcut passes
+            // the former --preview argument.
+            _desktopPinned = true;
+            // The desktop host controls the component layer. Do not enter the
+            // global topmost band, even briefly during startup.
+            Topmost = false;
 
             var savedCloseToTray = await _backend.Settings.LoadAsync<bool?>(CloseToTraySettingKey);
             _closeToTray = savedCloseToTray ?? true;
@@ -979,6 +972,22 @@ public partial class MainWindow : Window
     private void FileCard_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
         _dragCandidate = null;
+    }
+
+    private void FileCard_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not Border border || border.Tag is not DesktopItemViewModel item)
+        {
+            return;
+        }
+
+        var screenPoint = border.PointToScreen(e.GetPosition(border));
+        var shown = _shell.ShowContextMenu(
+            item.Path,
+            new WindowInteropHelper(this).Handle,
+            (int)Math.Round(screenPoint.X),
+            (int)Math.Round(screenPoint.Y));
+        e.Handled = shown;
     }
 
     private void FileCard_DragEnter(object sender, DragEventArgs e) =>
