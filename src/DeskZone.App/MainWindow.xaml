@@ -101,7 +101,7 @@
                 </Setter.Value>
             </Setter>
             <Style.Triggers>
-                <DataTrigger Binding="{Binding IsExpanded}" Value="True">
+                <DataTrigger Binding="{Binding IsExpandedForDisplay}" Value="True">
                     <Setter Property="RenderTransform">
                         <Setter.Value>
                             <RotateTransform Angle="90" />
@@ -254,6 +254,30 @@
                     <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TitleSecondaryBrush}" Margin="6,0,0,0" Text="DeskZone" />
                 </StackPanel>
 
+                <Button Grid.Column="0"
+                        x:Name="NewCategoryButton"
+                        Width="52"
+                        Height="30"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Center"
+                        Margin="0,0,8,0"
+                        Style="{StaticResource NewCategoryButtonStyle}"
+                        BorderBrush="{DynamicResource NewCategoryBorderBrush}"
+                        BorderThickness="{DynamicResource NewCategoryBorderThickness}"
+                        Background="{DynamicResource NewCategorySurfaceBrush}"
+                        Foreground="{DynamicResource ActionBrush}"
+                        FontSize="17"
+                        FontWeight="SemiBold"
+                        Cursor="Hand"
+                        ToolTip="新建分类；也可以将文件夹拖到这里"
+                        AllowDrop="True"
+                        DragEnter="NewCategory_DragEnter"
+                        DragOver="NewCategory_DragOver"
+                        DragLeave="NewCategory_DragLeave"
+                        Drop="NewCategory_Drop"
+                        Content="＋"
+                        Click="NewCategory_Click" />
+
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <Button x:Name="TransparencyButton"
@@ -296,25 +320,34 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <Button Grid.Row="0"
-                        x:Name="NewCategoryButton"
-                        Style="{StaticResource NewCategoryButtonStyle}"
+                <Border Grid.Row="0"
                         Height="36"
                         Margin="0,0,0,8"
+                        CornerRadius="10"
                         BorderBrush="{DynamicResource NewCategoryBorderBrush}"
                         BorderThickness="{DynamicResource NewCategoryBorderThickness}"
-                        Background="{DynamicResource NewCategorySurfaceBrush}"
-                        Foreground="{DynamicResource ActionBrush}"
-                        FontWeight="SemiBold"
-                        Cursor="Hand"
-                        ToolTip="点击创建空分类，或拖入文件夹按其中的项目创建分类"
-                        AllowDrop="True"
-                        DragEnter="NewCategory_DragEnter"
-                        DragOver="NewCategory_DragOver"
-                        DragLeave="NewCategory_DragLeave"
-                        Drop="NewCategory_Drop"
-                        Content="＋ 新建分类"
-                        Click="NewCategory_Click" />
+                        Background="{DynamicResource NewCategorySurfaceBrush}">
+                    <Grid>
+                        <TextBox x:Name="SearchTextBox"
+                                 Padding="10,0"
+                                 BorderThickness="0"
+                                 Background="Transparent"
+                                 Foreground="{DynamicResource ActionBrush}"
+                                 FontSize="11"
+                                 VerticalContentAlignment="Center"
+                                 ToolTip="搜索客户端中的文件、文件夹和快捷方式"
+                                 Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                                 TextChanged="SearchTextBox_TextChanged"
+                                 KeyDown="SearchTextBox_KeyDown" />
+                        <TextBlock x:Name="SearchPlaceholder"
+                                   Margin="10,0"
+                                   VerticalAlignment="Center"
+                                   IsHitTestVisible="False"
+                                   Foreground="{DynamicResource CategoryMetaBrush}"
+                                   FontSize="11"
+                                   Text="搜索文件、文件夹或快捷方式" />
+                    </Grid>
+                </Border>
 
                 <ScrollViewer Grid.Row="1"
                               x:Name="CategoryScroll"
@@ -344,6 +377,7 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Border Margin="0,0,0,8"
+                                        Visibility="{Binding IsVisible, Converter={StaticResource BoolToVisibility}}"
                                         Padding="0"
                                         CornerRadius="11"
                                         BorderBrush="{DynamicResource CategoryBorderBrush}"
@@ -424,7 +458,7 @@
                                                        VerticalAlignment="Center"
                                                        Foreground="{DynamicResource CategoryMetaBrush}"
                                                        FontSize="11"
-                                                       Text="{Binding Items.Count}" />
+                                                       Text="{Binding VisibleItemCount}" />
 
                                             <Button Grid.Column="3"
                                                     ToolTip="分类选项"
@@ -457,10 +491,10 @@
                                             </Grid>
                                         </Border>
 
-                                        <ItemsControl ItemsSource="{Binding Items}"
+                                        <ItemsControl ItemsSource="{Binding VisibleItems}"
                                                       Margin="6,0,6,6"
                                                       HorizontalContentAlignment="Stretch"
-                                                      Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVisibility}}">
+                                                      Visibility="{Binding IsExpandedForDisplay, Converter={StaticResource BoolToVisibility}}">
                                             <ItemsControl.ItemsPanel>
                                                 <ItemsPanelTemplate>
                                                     <WrapPanel IsItemsHost="True"

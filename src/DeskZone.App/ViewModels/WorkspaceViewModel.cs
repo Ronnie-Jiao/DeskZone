@@ -11,6 +11,7 @@ public sealed class WorkspaceViewModel : BindableBase
     private readonly LocalBackend _backend;
     private readonly IShellService _shell;
     private string _statusMessage = "正在加载本地工作区…";
+    private string _searchText = string.Empty;
     private bool _isBusy;
 
     public WorkspaceViewModel(LocalBackend backend, IShellService shell)
@@ -20,6 +21,18 @@ public sealed class WorkspaceViewModel : BindableBase
     }
 
     public ObservableCollection<CategoryViewModel> Categories { get; } = new();
+
+    public string SearchText
+    {
+        get => _searchText;
+        set
+        {
+            if (SetField(ref _searchText, value))
+            {
+                ApplySearchFilter();
+            }
+        }
+    }
 
     public string StatusMessage
     {
@@ -54,6 +67,7 @@ public sealed class WorkspaceViewModel : BindableBase
         var category = await _backend.Categories.CreateAsync("新分类", "#126FF7", cancellationToken);
         var viewModel = new CategoryViewModel(category, Array.Empty<DesktopItem>());
         Categories.Add(viewModel);
+        ApplySearchFilter();
         StatusMessage = "已创建“新分类”，可以直接修改名称。";
         return viewModel;
     }
@@ -97,6 +111,7 @@ public sealed class WorkspaceViewModel : BindableBase
             var category = await _backend.Categories.CreateAsync(directory.Name, "#126FF7", cancellationToken);
             var viewModel = new CategoryViewModel(category, Array.Empty<DesktopItem>());
             Categories.Add(viewModel);
+            ApplySearchFilter();
 
             AddReferencesResult? result = null;
             if (childPaths.Length > 0)
@@ -320,6 +335,7 @@ public sealed class WorkspaceViewModel : BindableBase
         catch
         {
             category.RestoreItems(originalOrder);
+            category.ApplySearch(_searchText);
             throw;
         }
         finally
@@ -362,6 +378,7 @@ public sealed class WorkspaceViewModel : BindableBase
         await _shell.OpenAsync(item.Path, cancellationToken);
         await _backend.Items.RecordOpenedAsync(item.Model, cancellationToken);
         await ReloadRecentlyOpenedItemsAsync(cancellationToken);
+        ApplySearchFilter();
         StatusMessage = $"已交给 Windows 打开“{item.Name}”。";
     }
 
@@ -388,6 +405,8 @@ public sealed class WorkspaceViewModel : BindableBase
                 : await _backend.Items.ListByCategoryAsync(category.Id, cancellationToken);
             Categories.Add(new CategoryViewModel(category, items));
         }
+
+        ApplySearchFilter();
     }
 
     private async Task ReloadRecentlyOpenedItemsAsync(CancellationToken cancellationToken)
@@ -426,5 +445,14 @@ public sealed class WorkspaceViewModel : BindableBase
     {
         var items = await _backend.Items.ListByCategoryAsync(category.Id, cancellationToken);
         category.ReplaceItems(items);
+        ApplySearchFilter();
+    }
+
+    private void ApplySearchFilter()
+    {
+        foreach (var category in Categories)
+        {
+            category.ApplySearch(_searchText);
+        }
     }
 }

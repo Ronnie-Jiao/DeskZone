@@ -8,6 +8,7 @@ public sealed class CategoryViewModel : BindableBase
     private Category _model;
     private string _name;
     private bool _isExpanded;
+    private bool _isSearchActive;
 
     public CategoryViewModel(Category model, IEnumerable<DesktopItem> items)
     {
@@ -22,6 +23,7 @@ public sealed class CategoryViewModel : BindableBase
     public bool IsSystem => _model.IsSystem;
     public bool IsRecentlyOpened => string.Equals(_model.SystemKey, SystemCategoryKeys.RecentlyOpened, StringComparison.Ordinal);
     public ObservableCollection<DesktopItemViewModel> Items { get; } = new();
+    public ObservableCollection<DesktopItemViewModel> VisibleItems { get; } = new();
 
     public string Name
     {
@@ -37,11 +39,18 @@ public sealed class CategoryViewModel : BindableBase
             if (SetField(ref _isExpanded, value))
             {
                 RaisePropertyChanged(nameof(ToggleGlyph));
+                RaisePropertyChanged(nameof(IsExpandedForDisplay));
             }
         }
     }
 
-    public string ToggleGlyph => IsExpanded ? "▾" : "▸";
+    public string ToggleGlyph => IsExpandedForDisplay ? "▾" : "▸";
+
+    public bool IsVisible => !_isSearchActive || VisibleItems.Count > 0;
+
+    public bool IsExpandedForDisplay => IsExpanded || (_isSearchActive && VisibleItems.Count > 0);
+
+    public int VisibleItemCount => _isSearchActive ? VisibleItems.Count : Items.Count;
 
     public string PersistedName => _model.Name;
 
@@ -67,6 +76,29 @@ public sealed class CategoryViewModel : BindableBase
         {
             Items.Add(new DesktopItemViewModel(item, isRecentItem: IsRecentlyOpened));
         }
+
+        ApplySearch(string.Empty);
+    }
+
+    public void ApplySearch(string searchText)
+    {
+        _isSearchActive = !string.IsNullOrWhiteSpace(searchText);
+        var query = searchText.Trim();
+
+        VisibleItems.Clear();
+        foreach (var item in Items)
+        {
+            if (!_isSearchActive ||
+                item.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
+                item.Path.Contains(query, StringComparison.CurrentCultureIgnoreCase))
+            {
+                VisibleItems.Add(item);
+            }
+        }
+
+        RaisePropertyChanged(nameof(IsVisible));
+        RaisePropertyChanged(nameof(IsExpandedForDisplay));
+        RaisePropertyChanged(nameof(VisibleItemCount));
     }
 
     public void MoveItem(int sourceIndex, int targetIndex)

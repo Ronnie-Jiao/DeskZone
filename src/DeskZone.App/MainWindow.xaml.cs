@@ -417,6 +417,27 @@ public partial class MainWindow : Window
         }
     }
 
+    private void SearchTextBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (SearchPlaceholder is not null)
+        {
+            SearchPlaceholder.Visibility = string.IsNullOrEmpty(SearchTextBox.Text)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+    }
+
+    private void SearchTextBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape || string.IsNullOrEmpty(SearchTextBox.Text))
+        {
+            return;
+        }
+
+        SearchTextBox.Clear();
+        e.Handled = true;
+    }
+
     private void NewCategory_DragEnter(object sender, DragEventArgs e) =>
         UpdateNewCategoryDropVisual(e);
 
