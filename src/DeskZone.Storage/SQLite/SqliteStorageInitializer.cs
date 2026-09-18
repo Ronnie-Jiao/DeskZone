@@ -218,15 +218,43 @@ public sealed class SqliteStorageInitializer : IStorageInitializer
         }
     }
 
-    private static async Task VerifyAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    private async Task VerifyAsync(SqliteConnection connection, CancellationToken cancellationToken)
     {
-        await using var command = connection.CreateCommand();
-        command.CommandText = "PRAGMA quick_check;";
-        var result = Convert.ToString(await command.ExecuteScalarAsync(cancellationToken));
+        var result = await QuickCheckAsync(connection, cancellationToken);
+        if (string.Equals(result, "ok", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        // SQLite can report a damaged auto-index even when the table rows are
+        // still readable. Rebuild only the affected table indexes after taking
+        // a consistent backup, so startup can recover without dropping user data.
+        if (result?.Contains("sqlite_autoindex_recently_opened_items_1", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            if (_backupService is not null)
+            {
+                await _backupService.CreateBackupAsync(BackupReason.BeforeRepair, cancellationToken);
+            }
+
+            await ExecuteAsync(connection, "REINDEX recently_opened_items;", cancellationToken);
+            result = await QuickCheckAsync(connection, cancellationToken);
+            if (string.Equals(result, "ok", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
         if (!string.Equals(result, "ok", StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException($"DeskZone 本地数据库完整性检查失败：{result}");
         }
+    }
+
+    private static async Task<string?> QuickCheckAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA quick_check;";
+        return Convert.ToString(await command.ExecuteScalarAsync(cancellationToken));
     }
 
     private static async Task ExecuteAsync(SqliteConnection connection, string sql, CancellationToken cancellationToken)

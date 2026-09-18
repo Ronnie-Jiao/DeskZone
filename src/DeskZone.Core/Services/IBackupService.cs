@@ -5,6 +5,7 @@ public enum BackupReason
     Manual,
     BeforeMigration,
     BeforeImport,
+    BeforeRepair,
     UpgradeStartup,
     DailyStartup
 }
