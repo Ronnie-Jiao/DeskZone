@@ -235,7 +235,7 @@
             <Grid Grid.Row="0"
                   x:Name="TitleBar"
                   Background="Transparent"
-                  Cursor="SizeAll"
+                  Cursor="Hand"
                   PreviewMouseLeftButtonDown="TitleBar_MouseLeftButtonDown"
                   PreviewMouseMove="TitleBar_MouseMove"
                   PreviewMouseLeftButtonUp="TitleBar_MouseLeftButtonUp">
