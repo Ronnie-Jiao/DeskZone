@@ -211,7 +211,7 @@ public sealed class SqliteWorkspaceStore : IWorkspaceStore
             ORDER BY opened_at DESC
             LIMIT $maximumCount;
             """;
-        command.Parameters.AddWithValue("$maximumCount", Math.Clamp(maximumCount, 1, 10));
+        command.Parameters.AddWithValue("$maximumCount", Math.Max(maximumCount, 1));
 
         var result = new List<RecentOpenedItem>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);

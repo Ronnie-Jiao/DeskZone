@@ -7,12 +7,6 @@ namespace DeskZone.App;
 
 internal sealed record SmartGroupDefinition(string Key, string Name, int OrderIndex);
 
-internal sealed record SmartDesktopItem(
-    string Path,
-    string DisplayName,
-    DesktopItemType ItemType,
-    string GroupKey);
-
 internal static class SmartGroupingService
 {
     public static IReadOnlyList<SmartGroupDefinition> Definitions { get; } =
@@ -27,70 +21,15 @@ internal static class SmartGroupingService
             new SmartGroupDefinition("smart-other", "其他文件", 6)
         };
 
-    public static string? GetDesktopDirectory()
+    public static string Classify(DesktopItem item)
     {
-        var desktopDirectory = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-        if (string.IsNullOrWhiteSpace(desktopDirectory))
-        {
-            desktopDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-        }
-
-        return Directory.Exists(desktopDirectory) ? Path.GetFullPath(desktopDirectory) : null;
-    }
-
-    public static string? GetDesktopWatchPath()
-    {
-        var desktopDirectory = GetDesktopDirectory();
-        return desktopDirectory is null
-            ? null
-            : Path.Combine(desktopDirectory, ".deskzone-desktop-watch");
-    }
-
-    public static IReadOnlyList<SmartDesktopItem> ScanDesktopItems()
-    {
-        var desktopDirectory = GetDesktopDirectory();
-        if (desktopDirectory is null)
-        {
-            return Array.Empty<SmartDesktopItem>();
-        }
-
-        try
-        {
-            return new DirectoryInfo(desktopDirectory)
-                .EnumerateFileSystemInfos("*", new EnumerationOptions
-                {
-                    IgnoreInaccessible = true,
-                    RecurseSubdirectories = false,
-                    ReturnSpecialDirectories = false
-                })
-                .OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
-                .Select(CreateSmartDesktopItem)
-                .ToArray();
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DirectoryNotFoundException)
-        {
-            return Array.Empty<SmartDesktopItem>();
-        }
-    }
-
-    private static SmartDesktopItem CreateSmartDesktopItem(FileSystemInfo entry)
-    {
-        var path = entry.FullName;
-        var targetPath = TryResolveShortcutTarget(path);
-        var groupKey = Classify(path, targetPath);
-        var itemType = Directory.Exists(path)
-            ? DesktopItemType.Folder
-            : IsShortcut(path)
-                ? DesktopItemType.Shortcut
-                : DesktopItemType.File;
-
-        return new SmartDesktopItem(entry.FullName, entry.Name, itemType, groupKey);
-    }
-
-    private static string Classify(string path, string? targetPath)
-    {
+        var path = item.ActivePath;
+        var targetPath = item.ItemType == DesktopItemType.Shortcut
+            ? TryResolveShortcutTarget(path)
+            : null;
         var classificationPath = string.IsNullOrWhiteSpace(targetPath) ? path : targetPath;
-        if (Directory.Exists(classificationPath))
+
+        if (item.ItemType == DesktopItemType.Folder || Directory.Exists(classificationPath))
         {
             return "smart-directories";
         }
@@ -101,7 +40,8 @@ internal static class SmartGroupingService
             return "smart-archives";
         }
 
-        if (IsApplication(extension) || IsShortcut(path) && string.IsNullOrWhiteSpace(targetPath))
+        if (IsApplication(extension) ||
+            item.ItemType == DesktopItemType.Shortcut && string.IsNullOrWhiteSpace(targetPath))
         {
             return "smart-applications";
         }
@@ -120,6 +60,9 @@ internal static class SmartGroupingService
         // instead of creating a profession-specific media category.
         return "smart-other";
     }
+
+    public static bool IsMissing(DesktopItem item) =>
+        !File.Exists(item.ActivePath) && !Directory.Exists(item.ActivePath);
 
     private static bool IsArchiveOrInstaller(string extension, string path)
     {
@@ -143,13 +86,6 @@ internal static class SmartGroupingService
 
     private static bool IsApplication(string extension) =>
         ApplicationExtensions.Contains(extension);
-
-    private static bool IsShortcut(string path)
-    {
-        var extension = Path.GetExtension(path);
-        return string.Equals(extension, ".lnk", StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(extension, ".url", StringComparison.OrdinalIgnoreCase);
-    }
 
     private static string? TryResolveShortcutTarget(string path)
     {

@@ -501,7 +501,15 @@ public sealed class WorkspaceViewModel : BindableBase
 
         await _shell.OpenAsync(item.Path, cancellationToken);
         await _backend.Items.RecordOpenedAsync(item.Model, cancellationToken);
-        await ReloadRecentlyOpenedItemsAsync(cancellationToken);
+        if (IsSmartMode)
+        {
+            await ReloadSmartGroupsAsync(cancellationToken);
+        }
+        else
+        {
+            await ReloadRecentlyOpenedItemsAsync(cancellationToken);
+        }
+
         ApplySearchFilter();
         StatusMessage = $"已交给 Windows 打开“{item.Name}”。";
     }
@@ -541,8 +549,35 @@ public sealed class WorkspaceViewModel : BindableBase
 
     private async Task ReloadSmartGroupsAsync(CancellationToken cancellationToken)
     {
-        var scannedItems = await Task.Run(
-            SmartGroupingService.ScanDesktopItems,
+        var recentItems = await _backend.Items.ListRecentlyOpenedAsync(int.MaxValue, cancellationToken);
+        var recentOrderByItemId = new Dictionary<Guid, int>();
+        var recentOrderByPath = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (var index = 0; index < recentItems.Count; index++)
+        {
+            var recentItem = recentItems[index];
+            recentOrderByItemId.TryAdd(recentItem.ItemId, index);
+
+            var normalizedPath = NormalizePathForComparison(recentItem.Path);
+            if (normalizedPath is not null)
+            {
+                recentOrderByPath.TryAdd(normalizedPath, index);
+            }
+        }
+
+        var sourceItems = Categories
+            .Where(category => !category.IsRecentlyOpened)
+            .SelectMany(category => category.Items)
+            .Select(item => item.Model)
+            .GroupBy(item => item.Id)
+            .Select(group => group.First())
+            .ToArray();
+        var classifiedItems = await Task.Run(
+            () => sourceItems
+                .Select(item => (
+                    Item: item,
+                    GroupKey: SmartGroupingService.Classify(item),
+                    RecentOrder: GetRecentOrder(item, recentOrderByItemId, recentOrderByPath)))
+                .ToArray(),
             cancellationToken);
 
         var now = DateTimeOffset.UtcNow;
@@ -557,8 +592,10 @@ public sealed class WorkspaceViewModel : BindableBase
             }
             else
             {
-                var groupItems = scannedItems
+                var groupItems = classifiedItems
                     .Where(item => string.Equals(item.GroupKey, definition.Key, StringComparison.Ordinal))
+                    .OrderBy(item => item.RecentOrder)
+                    .ThenBy(item => item.Item.CustomOrder)
                     .ToArray();
                 if (groupItems.Length == 0)
                 {
@@ -567,17 +604,17 @@ public sealed class WorkspaceViewModel : BindableBase
 
                 items = groupItems
                     .Select((item, index) => new DesktopItem(
-                        Guid.NewGuid(),
+                        item.Item.Id,
                         categoryId,
-                        DesktopItemMode.Reference,
-                        item.Path,
-                        null,
-                        item.DisplayName,
-                        item.ItemType,
+                        item.Item.ItemMode,
+                        item.Item.OriginalPath,
+                        item.Item.ManagedPath,
+                        item.Item.DisplayName,
+                        item.Item.ItemType,
                         index,
-                        !File.Exists(item.Path) && !Directory.Exists(item.Path),
-                        now,
-                        now))
+                        SmartGroupingService.IsMissing(item.Item),
+                        item.Item.CreatedAt,
+                        item.Item.UpdatedAt))
                     .ToArray();
             }
 
@@ -634,6 +671,40 @@ public sealed class WorkspaceViewModel : BindableBase
             .ToArray();
     }
 
+    private static int GetRecentOrder(
+        DesktopItem item,
+        IReadOnlyDictionary<Guid, int> recentOrderByItemId,
+        IReadOnlyDictionary<string, int> recentOrderByPath)
+    {
+        if (recentOrderByItemId.TryGetValue(item.Id, out var order))
+        {
+            return order;
+        }
+
+        var normalizedPath = NormalizePathForComparison(item.ActivePath);
+        return normalizedPath is not null && recentOrderByPath.TryGetValue(normalizedPath, out order)
+            ? order
+            : int.MaxValue;
+    }
+
+    private static string? NormalizePathForComparison(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        var trimmedPath = path.Trim().Trim('"');
+        try
+        {
+            return Path.GetFullPath(trimmedPath);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return trimmedPath;
+        }
+    }
+
     private async Task ReloadCategoryItemsAsync(CategoryViewModel category, CancellationToken cancellationToken)
     {
         var items = await _backend.Items.ListByCategoryAsync(category.Id, cancellationToken);
@@ -643,14 +714,6 @@ public sealed class WorkspaceViewModel : BindableBase
 
     private void UpdateFileSystemWatchPaths()
     {
-        if (IsSmartMode)
-        {
-            var desktopWatchPath = SmartGroupingService.GetDesktopWatchPath();
-            _backend.FileSystemChanges.UpdatePaths(
-                desktopWatchPath is null ? Array.Empty<string>() : new[] { desktopWatchPath });
-            return;
-        }
-
         _backend.FileSystemChanges.UpdatePaths(
             Categories
                 .Where(category => !category.IsRecentlyOpened)

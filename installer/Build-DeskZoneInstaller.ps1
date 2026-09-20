@@ -5,7 +5,7 @@ param(
     [string]$RuntimeIdentifier = 'win-x64',
     [string]$OutputPath = '',
     [string]$InstallerPath = '',
-    [bool]$SelfContained = $false
+    [bool]$SelfContained = $true
 )
 
 Set-StrictMode -Version Latest

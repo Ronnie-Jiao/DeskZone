@@ -5,7 +5,7 @@ param(
     [string]$RuntimeIdentifier = 'win-x64',
     [string]$OutputPath = '',
     [ValidateSet('true', 'false', 'True', 'False', '1', '0')]
-    [string]$SelfContained = 'false'
+    [string]$SelfContained = 'true'
 )
 
 Set-StrictMode -Version Latest

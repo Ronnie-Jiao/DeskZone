@@ -19,17 +19,14 @@
 在仓库根目录执行：
 
 ```powershell
-# 发布运行包；默认依赖目标电脑已安装的 .NET 10 Runtime
+# 发布自包含运行包；默认不要求目标电脑预装 .NET 10 Desktop Runtime
 powershell -ExecutionPolicy Bypass -File .\installer\Publish-DeskZone.ps1
 
 # 生成单文件 EXE 安装包；默认使用目标电脑的 .NET 10 Desktop Runtime
 powershell -ExecutionPolicy Bypass -File .\installer\Build-DeskZoneInstaller.ps1
 
-# 如果本机已缓存对应运行时包，也可以生成自包含安装包
-powershell -ExecutionPolicy Bypass -File .\installer\Build-DeskZoneInstaller.ps1 -SelfContained $true
-
-# 如果已恢复 win-x64 的 .NET 10 Runtime 包，也可以发布自包含版本
-powershell -ExecutionPolicy Bypass -File .\installer\Publish-DeskZone.ps1 -SelfContained true
+# 如明确确认目标电脑已经安装对应运行时，才使用框架依赖版本
+powershell -ExecutionPolicy Bypass -File .\installer\Publish-DeskZone.ps1 -SelfContained false
 
 # 打开带有目录选择、进度和完成页的安装向导
 powershell -ExecutionPolicy Bypass -File .\installer\Install-DeskZone.ps1 -Interactive
