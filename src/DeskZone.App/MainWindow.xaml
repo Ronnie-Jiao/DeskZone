@@ -153,6 +153,49 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <Style x:Key="WorkspaceModeButtonStyle" TargetType="Button">
+            <Setter Property="Height" Value="26" />
+            <Setter Property="Padding" Value="10,0" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource CategoryMetaBrush}" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="OverridesDefaultStyle" Value="True" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Button}">
+                        <Border Background="{TemplateBinding Background}"
+                                CornerRadius="7"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                              Content="{TemplateBinding Content}"
+                                              ContentTemplate="{TemplateBinding ContentTemplate}"
+                                              ContentStringFormat="{TemplateBinding ContentStringFormat}"
+                                              RecognizesAccessKey="True" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding RelativeSource={RelativeSource Self}, Path=Tag}" Value="True">
+                    <Setter Property="Background" Value="{StaticResource BrandBrush}" />
+                    <Setter Property="Foreground" Value="White" />
+                </DataTrigger>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Opacity" Value="0.88" />
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.45" />
+                    <Setter Property="Cursor" Value="Arrow" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
         <Style x:Key="ResizeHandle" TargetType="Thumb">
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="Panel.ZIndex" Value="10" />
@@ -244,41 +287,58 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
-                    <Image Width="28"
-                           Height="28"
-                           Margin="0,0,8,0"
-                           Stretch="Uniform"
-                           SnapsToDevicePixels="True"
-                           RenderOptions.BitmapScalingMode="HighQuality"
-                           Source="Assets/DeskZoneLogoCompact.png" />
-                    <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Foreground="{DynamicResource TitlePrimaryBrush}" Text="桌序" />
-                    <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TitleSecondaryBrush}" Margin="6,0,0,0" Text="DeskZone" />
-                </StackPanel>
+                <Grid Grid.Column="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
 
-                <Button Grid.Column="0"
-                        x:Name="NewCategoryButton"
-                        Width="52"
-                        Height="30"
-                        HorizontalAlignment="Right"
-                        VerticalAlignment="Center"
-                        Margin="0,0,8,0"
-                        Style="{StaticResource NewCategoryButtonStyle}"
-                        BorderBrush="{DynamicResource NewCategoryBorderBrush}"
-                        BorderThickness="{DynamicResource NewCategoryBorderThickness}"
-                        Background="{DynamicResource NewCategorySurfaceBrush}"
-                        Foreground="{DynamicResource ActionBrush}"
-                        FontSize="17"
-                        FontWeight="SemiBold"
-                        Cursor="Hand"
-                        ToolTip="新建分类；也可以将文件夹拖到这里"
-                        AllowDrop="True"
-                        DragEnter="NewCategory_DragEnter"
-                        DragOver="NewCategory_DragOver"
-                        DragLeave="NewCategory_DragLeave"
-                        Drop="NewCategory_Drop"
-                        Content="＋"
-                        Click="NewCategory_Click" />
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+                        <Image Width="28"
+                               Height="28"
+                               Margin="0,0,8,0"
+                               Stretch="Uniform"
+                               SnapsToDevicePixels="True"
+                               RenderOptions.BitmapScalingMode="HighQuality"
+                               Source="Assets/DeskZoneLogoCompact.png" />
+                        <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Foreground="{DynamicResource TitlePrimaryBrush}" Text="桌序" />
+                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TitleSecondaryBrush}" Margin="6,0,0,0" Text="DeskZone" />
+                    </StackPanel>
+
+                    <Border x:Name="TitleBarDragSurface"
+                            Grid.Column="1"
+                            Background="#01000000"
+                            Cursor="SizeAll"
+                            ToolTip="按住并拖动可移动窗口"
+                            PreviewMouseLeftButtonDown="TitleBar_MouseLeftButtonDown"
+                            PreviewMouseMove="TitleBar_MouseMove"
+                            PreviewMouseLeftButtonUp="TitleBar_MouseLeftButtonUp" />
+
+                    <Button Grid.Column="2"
+                            x:Name="NewCategoryButton"
+                            Width="52"
+                            Height="30"
+                            VerticalAlignment="Center"
+                            Margin="0,0,8,0"
+                            Style="{StaticResource NewCategoryButtonStyle}"
+                            BorderBrush="{DynamicResource NewCategoryBorderBrush}"
+                            BorderThickness="{DynamicResource NewCategoryBorderThickness}"
+                            Background="{DynamicResource NewCategorySurfaceBrush}"
+                            IsEnabled="{Binding IsCustomMode}"
+                            Foreground="{DynamicResource ActionBrush}"
+                            FontSize="17"
+                            FontWeight="SemiBold"
+                            Cursor="Hand"
+                            ToolTip="新建分类；也可以将文件夹拖到这里"
+                            AllowDrop="True"
+                            DragEnter="NewCategory_DragEnter"
+                            DragOver="NewCategory_DragOver"
+                            DragLeave="NewCategory_DragLeave"
+                            Drop="NewCategory_Drop"
+                            Content="＋"
+                            Click="NewCategory_Click" />
+                </Grid>
 
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
@@ -319,10 +379,39 @@
             <Grid Grid.Row="1" x:Name="WorkspaceBody" Margin="10,4,10,10">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
                 <Border Grid.Row="0"
+                        Height="34"
+                        Margin="0,0,0,6"
+                        Padding="2"
+                        CornerRadius="10"
+                        BorderBrush="{DynamicResource NewCategoryBorderBrush}"
+                        BorderThickness="{DynamicResource NewCategoryBorderThickness}"
+                        Background="{DynamicResource NewCategorySurfaceBrush}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Button Grid.Column="0"
+                                Style="{StaticResource WorkspaceModeButtonStyle}"
+                                Tag="{Binding IsCustomMode}"
+                                IsEnabled="{Binding CanSwitchMode}"
+                                Content="自定义"
+                                Click="CustomMode_Click" />
+                        <Button Grid.Column="1"
+                                Style="{StaticResource WorkspaceModeButtonStyle}"
+                                Tag="{Binding IsSmartMode}"
+                                IsEnabled="{Binding CanSwitchMode}"
+                                Content="智能分组"
+                                Click="SmartMode_Click" />
+                    </Grid>
+                </Border>
+
+                <Border Grid.Row="1"
                         Height="36"
                         Margin="0,0,0,8"
                         CornerRadius="10"
@@ -331,16 +420,19 @@
                         Background="{DynamicResource NewCategorySurfaceBrush}">
                     <Grid>
                         <TextBox x:Name="SearchTextBox"
+                                 Focusable="True"
+                                 IsTabStop="True"
                                  Padding="10,0"
                                  BorderThickness="0"
                                  Background="Transparent"
                                  Foreground="{DynamicResource ActionBrush}"
                                  FontSize="11"
-                                 VerticalContentAlignment="Center"
-                                 ToolTip="搜索客户端中的文件、文件夹和快捷方式"
-                                 Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
-                                 TextChanged="SearchTextBox_TextChanged"
-                                 KeyDown="SearchTextBox_KeyDown" />
+                                  VerticalContentAlignment="Center"
+                                  ToolTip="搜索客户端中的文件、文件夹和快捷方式"
+                                  Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                                  PreviewMouseLeftButtonDown="SearchTextBox_PreviewMouseLeftButtonDown"
+                                  TextChanged="SearchTextBox_TextChanged"
+                                  KeyDown="SearchTextBox_KeyDown" />
                         <TextBlock x:Name="SearchPlaceholder"
                                    Margin="10,0"
                                    VerticalAlignment="Center"
@@ -351,7 +443,7 @@
                     </Grid>
                 </Border>
 
-                <ScrollViewer Grid.Row="1"
+                <ScrollViewer Grid.Row="2"
                               x:Name="CategoryScroll"
                               VerticalScrollBarVisibility="Visible"
                               HorizontalScrollBarVisibility="Disabled"
@@ -374,7 +466,7 @@
                             </Style.Triggers>
                         </Style>
                     </ScrollViewer.Resources>
-                    <ItemsControl ItemsSource="{Binding Categories}"
+                    <ItemsControl ItemsSource="{Binding DisplayedCategories}"
                                   HorizontalContentAlignment="Stretch">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
@@ -519,7 +611,6 @@
                                                              AllowDrop="{Binding CanReorder}"
                                                              MouseLeftButtonDown="FileCard_MouseLeftButtonDown"
                                                              MouseLeftButtonUp="FileCard_MouseLeftButtonUp"
-                                                             MouseRightButtonUp="FileCard_MouseRightButtonUp"
                                                              MouseMove="FileCard_MouseMove"
                                                              DragEnter="FileCard_DragEnter"
                                                              DragOver="FileCard_DragOver"

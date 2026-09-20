@@ -48,7 +48,14 @@ public partial class MainWindow : Window
     private const string WindowsStartupRegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string WindowsStartupRegistryValueName = "DeskZone";
     private const int WmSize = 0x0005;
+    private const int WmCancelMode = 0x001F;
+    private const int WmMouseMove = 0x0200;
+    private const int WmLButtonDown = 0x0201;
+    private const int WmLButtonUp = 0x0202;
+    private const int WmCaptureChanged = 0x0215;
     private const int SizeMinimized = 1;
+    private const long WsChild = 0x40000000L;
+    private const uint MouseKeyLeftButton = 0x0001;
     private const uint SwpNoSize = 0x0001;
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
@@ -86,6 +93,25 @@ public partial class MainWindow : Window
         int height,
         uint flags);
 
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
+    private static extern IntPtr GetWindowLongPtr(IntPtr windowHandle, int index);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr GetParent(IntPtr windowHandle);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool ScreenToClient(IntPtr windowHandle, ref ScreenPoint point);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SetCapture(IntPtr windowHandle);
+
+    [DllImport("user32.dll")]
+    private static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetForegroundWindow(IntPtr windowHandle);
+
     [DllImport("user32.dll")]
     private static extern uint GetDoubleClickTime();
 
@@ -108,11 +134,13 @@ public partial class MainWindow : Window
     private Forms.ContextMenuStrip? _trayMenu;
     private Drawing.Icon? _trayIconImage;
     private HwndSource? _windowSource;
+    private SearchInputWindow? _searchInputWindow;
 
     private bool _applyingLayout;
     private bool _allowClose;
     private bool _handlingWindowClose;
     private bool _isTitleBarDragging;
+    private IntPtr _titleBarDragWindowHandle;
     private ScreenPoint _titleBarDragStartCursor;
     private WindowRect _titleBarDragStartWindow;
     private bool _desktopPinned;
@@ -139,6 +167,14 @@ public partial class MainWindow : Window
         IDesktopHostService desktopHost)
     {
         InitializeComponent();
+
+        // Capture the preview event at the window level as well. ScrollViewer,
+        // ItemsControl, and some shell-hosted surfaces can mark the card's
+        // routed mouse event handled before it reaches the card template.
+        AddHandler(
+            UIElement.PreviewMouseRightButtonUpEvent,
+            new MouseButtonEventHandler(MainWindow_PreviewMouseRightButtonUp),
+            handledEventsToo: true);
 
         _backend = backend;
         _shell = shell;
@@ -184,6 +220,8 @@ public partial class MainWindow : Window
         InitializeTrayIcon();
         Closed += (_, _) =>
         {
+            _searchInputWindow?.Close();
+            _searchInputWindow = null;
             _fileSystemRefreshTimer.Stop();
             _backend.FileSystemChanges.Changed -= FileSystemChanges_Changed;
             DisposeTrayIcon();
@@ -208,6 +246,33 @@ public partial class MainWindow : Window
         if (message == App.ShowExistingMessageId)
         {
             ShowFromTray();
+            handled = true;
+        }
+        else if (message == WmLButtonDown && TryBeginTitleBarDragFromNativeMessage(lParam))
+        {
+            handled = true;
+        }
+        else if (message == WmMouseMove && _isTitleBarDragging)
+        {
+            if ((wParam.ToInt64() & MouseKeyLeftButton) == 0)
+            {
+                EndTitleBarDrag();
+            }
+            else
+            {
+                MoveTitleBarWindow();
+            }
+
+            handled = true;
+        }
+        else if (message == WmLButtonUp && _isTitleBarDragging)
+        {
+            EndTitleBarDrag();
+            handled = true;
+        }
+        else if ((message == WmCancelMode || message == WmCaptureChanged) && _isTitleBarDragging)
+        {
+            EndTitleBarDrag();
             handled = true;
         }
         else if (message == WmSize && wParam.ToInt64() == SizeMinimized)
@@ -426,7 +491,7 @@ public partial class MainWindow : Window
 
     private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (_locked || e.LeftButton != MouseButtonState.Pressed)
+        if (e.LeftButton != MouseButtonState.Pressed)
         {
             return;
         }
@@ -436,15 +501,11 @@ public partial class MainWindow : Window
             return;
         }
 
-        var handle = new WindowInteropHelper(this).Handle;
-        if (handle == IntPtr.Zero || !GetCursorPos(out _titleBarDragStartCursor) ||
-            !GetWindowRect(handle, out _titleBarDragStartWindow))
+        if (!TryBeginTitleBarDrag())
         {
             return;
         }
 
-        _isTitleBarDragging = true;
-        Mouse.Capture(TitleBar, CaptureMode.SubTree);
         e.Handled = true;
     }
 
@@ -461,20 +522,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (GetCursorPos(out var cursor))
-        {
-            var handle = new WindowInteropHelper(this).Handle;
-            var x = _titleBarDragStartWindow.Left + cursor.X - _titleBarDragStartCursor.X;
-            var y = _titleBarDragStartWindow.Top + cursor.Y - _titleBarDragStartCursor.Y;
-            _ = SetWindowPos(
-                handle,
-                IntPtr.Zero,
-                x,
-                y,
-                0,
-                0,
-                SwpNoSize | SwpNoZOrder | SwpNoActivate | SwpShowWindow);
-        }
+        MoveTitleBarWindow();
 
         e.Handled = true;
     }
@@ -492,13 +540,113 @@ public partial class MainWindow : Window
 
     private void EndTitleBarDrag()
     {
+        var handle = _titleBarDragWindowHandle;
         _isTitleBarDragging = false;
+        _titleBarDragWindowHandle = IntPtr.Zero;
+        if (handle != IntPtr.Zero)
+        {
+            _ = ReleaseCapture();
+        }
+
         if (Mouse.Captured == TitleBar)
         {
             Mouse.Capture(null);
         }
 
         ScheduleLayoutSave();
+    }
+
+    private bool TryBeginTitleBarDragFromNativeMessage(IntPtr lParam)
+    {
+        if (!IsTitleBarDragSurfacePoint(lParam))
+        {
+            return false;
+        }
+
+        return TryBeginTitleBarDrag();
+    }
+
+    private bool TryBeginTitleBarDrag()
+    {
+        if (_locked || _isTitleBarDragging)
+        {
+            return false;
+        }
+
+        var handle = new WindowInteropHelper(this).Handle;
+        if (handle == IntPtr.Zero || !GetCursorPos(out _titleBarDragStartCursor) ||
+            !GetWindowRect(handle, out _titleBarDragStartWindow))
+        {
+            return false;
+        }
+
+        _titleBarDragWindowHandle = handle;
+        _isTitleBarDragging = true;
+        _ = SetCapture(handle);
+        return true;
+    }
+
+    private void MoveTitleBarWindow()
+    {
+        if (!_isTitleBarDragging || _titleBarDragWindowHandle == IntPtr.Zero ||
+            !GetCursorPos(out var cursor))
+        {
+            return;
+        }
+
+        var screenX = _titleBarDragStartWindow.Left + cursor.X - _titleBarDragStartCursor.X;
+        var screenY = _titleBarDragStartWindow.Top + cursor.Y - _titleBarDragStartCursor.Y;
+        SetWindowPositionFromScreen(_titleBarDragWindowHandle, screenX, screenY);
+    }
+
+    private bool IsTitleBarDragSurfacePoint(IntPtr lParam)
+    {
+        if (!IsLoaded || TitleBarDragSurface.ActualWidth <= 0 || TitleBarDragSurface.ActualHeight <= 0)
+        {
+            return false;
+        }
+
+        var rawPoint = lParam.ToInt64();
+        var clientPixelPoint = new Point(
+            unchecked((short)(rawPoint & 0xFFFF)),
+            unchecked((short)((rawPoint >> 16) & 0xFFFF)));
+
+        var topLeft = TitleBarDragSurface.TranslatePoint(new Point(0, 0), this);
+        var bottomRight = TitleBarDragSurface.TranslatePoint(
+            new Point(TitleBarDragSurface.ActualWidth, TitleBarDragSurface.ActualHeight),
+            this);
+        var transform = _windowSource?.CompositionTarget?.TransformToDevice;
+        if (transform.HasValue)
+        {
+            topLeft = transform.Value.Transform(topLeft);
+            bottomRight = transform.Value.Transform(bottomRight);
+        }
+
+        return clientPixelPoint.X >= topLeft.X && clientPixelPoint.X <= bottomRight.X &&
+               clientPixelPoint.Y >= topLeft.Y && clientPixelPoint.Y <= bottomRight.Y;
+    }
+
+    private static bool SetWindowPositionFromScreen(IntPtr windowHandle, int screenX, int screenY)
+    {
+        var position = new ScreenPoint { X = screenX, Y = screenY };
+        var style = GetWindowLongPtr(windowHandle, -16).ToInt64();
+        if ((style & WsChild) != 0)
+        {
+            var parent = GetParent(windowHandle);
+            if (parent == IntPtr.Zero || !ScreenToClient(parent, ref position))
+            {
+                return false;
+            }
+        }
+
+        return SetWindowPos(
+            windowHandle,
+            IntPtr.Zero,
+            position.X,
+            position.Y,
+            0,
+            0,
+            SwpNoSize | SwpNoZOrder | SwpNoActivate | SwpShowWindow);
     }
 
     private async void NewCategory_Click(object sender, RoutedEventArgs e)
@@ -514,13 +662,103 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void CustomMode_Click(object sender, RoutedEventArgs e) =>
+        await SwitchWorkspaceModeAsync(WorkspaceDisplayMode.Custom);
+
+    private async void SmartMode_Click(object sender, RoutedEventArgs e) =>
+        await SwitchWorkspaceModeAsync(WorkspaceDisplayMode.Smart);
+
+    private async Task SwitchWorkspaceModeAsync(WorkspaceDisplayMode mode)
+    {
+        try
+        {
+            await _viewModel.SetDisplayModeAsync(mode);
+        }
+        catch (Exception ex)
+        {
+            ShowError("切换分组模式失败", ex);
+        }
+    }
+
     private void SearchTextBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        UpdateSearchPlaceholder();
+    }
+
+    private void SearchTextBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        ShowSearchInputWindow();
+        e.Handled = true;
+    }
+
+    private SearchInputWindow GetSearchInputWindow()
+    {
+        if (_searchInputWindow is not null)
+        {
+            return _searchInputWindow;
+        }
+
+        _searchInputWindow = new SearchInputWindow
+        {
+            DataContext = _viewModel
+        };
+        _searchInputWindow.Dismissed += SearchInputWindow_Dismissed;
+        return _searchInputWindow;
+    }
+
+    private void ShowSearchInputWindow()
+    {
+        var searchWindow = GetSearchInputWindow();
+        PositionSearchInputWindow(searchWindow);
+
+        searchWindow.InputBox.Foreground = (Brush)FindResource("ActionBrush");
+        searchWindow.InputBox.CaretBrush = searchWindow.InputBox.Foreground;
+        SearchTextBox.Visibility = Visibility.Hidden;
+        SearchPlaceholder.Visibility = Visibility.Collapsed;
+
+        if (!searchWindow.IsVisible)
+        {
+            searchWindow.Show();
+        }
+
+        var searchWindowHandle = new WindowInteropHelper(searchWindow).Handle;
+        _ = SetForegroundWindow(searchWindowHandle);
+        _ = searchWindow.Activate();
+        searchWindow.InputBox.Focus();
+        Keyboard.Focus(searchWindow.InputBox);
+        searchWindow.InputBox.CaretIndex = searchWindow.InputBox.Text.Length;
+    }
+
+    private void PositionSearchInputWindow(SearchInputWindow searchWindow)
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        if (handle == IntPtr.Zero || !GetWindowRect(handle, out var windowRect))
+        {
+            return;
+        }
+
+        var relativePoint = SearchTextBox.TranslatePoint(new Point(0, 0), this);
+        var dpi = VisualTreeHelper.GetDpi(this);
+        searchWindow.Left = windowRect.Left / dpi.DpiScaleX + relativePoint.X;
+        searchWindow.Top = windowRect.Top / dpi.DpiScaleY + relativePoint.Y;
+        searchWindow.Width = Math.Max(1, SearchTextBox.ActualWidth);
+        searchWindow.Height = Math.Max(1, SearchTextBox.ActualHeight);
+    }
+
+    private void SearchInputWindow_Dismissed(object? sender, EventArgs e)
+    {
+        SearchTextBox.Visibility = Visibility.Visible;
+        UpdateSearchPlaceholder();
+    }
+
+    private void UpdateSearchPlaceholder()
     {
         if (SearchPlaceholder is not null)
         {
-            SearchPlaceholder.Visibility = string.IsNullOrEmpty(SearchTextBox.Text)
-                ? Visibility.Visible
-                : Visibility.Collapsed;
+            SearchPlaceholder.Visibility = _searchInputWindow?.IsVisible == true ||
+                !string.IsNullOrEmpty(SearchTextBox.Text)
+                ? Visibility.Collapsed
+                : Visibility.Visible;
         }
     }
 
@@ -600,6 +838,12 @@ public partial class MainWindow : Window
     private async void NewCategory_Drop(object sender, DragEventArgs e)
     {
         ResetNewCategoryDropVisual();
+
+        if (_viewModel.IsSmartMode)
+        {
+            e.Handled = true;
+            return;
+        }
 
         if (!TryGetDroppedFolder(e, out var folderPath))
         {
@@ -1183,7 +1427,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (e.ClickCount == 1 && !item.IsRecentItem)
+        if (e.ClickCount == 1 && item.CanReorder && !_viewModel.IsSmartMode)
         {
             _dragCandidate = item;
             _dragStartPoint = e.GetPosition(this);
@@ -1211,20 +1455,37 @@ public partial class MainWindow : Window
         _dragCandidate = null;
     }
 
-    private void FileCard_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
+    private void MainWindow_PreviewMouseRightButtonUp(object sender, MouseButtonEventArgs e)
     {
-        if (sender is not Border border || border.Tag is not DesktopItemViewModel item)
+        var border = FindAncestor<Border>(e.OriginalSource as DependencyObject);
+        if (border?.Tag is not DesktopItemViewModel item)
         {
             return;
         }
 
+        e.Handled = true;
+
+        // GetCursorPos returns physical screen pixels, which is the coordinate
+        // space expected by TrackPopupMenuEx even when the panel is per-monitor
+        // DPI scaled or hosted as a WorkerW child.
         var screenPoint = border.PointToScreen(e.GetPosition(border));
+        var screenX = (int)Math.Round(screenPoint.X);
+        var screenY = (int)Math.Round(screenPoint.Y);
+        if (GetCursorPos(out var cursorPoint))
+        {
+            screenX = cursorPoint.X;
+            screenY = cursorPoint.Y;
+        }
+
         var shown = _shell.ShowContextMenu(
             item.Path,
             new WindowInteropHelper(this).Handle,
-            (int)Math.Round(screenPoint.X),
-            (int)Math.Round(screenPoint.Y));
-        e.Handled = shown;
+            screenX,
+            screenY);
+        if (!shown)
+        {
+            e.Handled = false;
+        }
     }
 
     private void FileCard_DragEnter(object sender, DragEventArgs e) =>
@@ -1240,6 +1501,13 @@ public partial class MainWindow : Window
 
     private void UpdateFileCardDropVisual(object sender, DragEventArgs e)
     {
+        if (_viewModel.IsSmartMode)
+        {
+            e.Effects = DragDropEffects.None;
+            ResetFileCardDropVisual(sender as Border);
+            return;
+        }
+
         if (sender is not Border border || border.Tag is not DesktopItemViewModel targetItem ||
             !TryGetDraggedItemId(e, out var sourceItemId) ||
             !TryGetDraggedItemCategoryId(e, out var sourceCategoryId) ||
@@ -1259,6 +1527,13 @@ public partial class MainWindow : Window
 
     private async void FileCard_Drop(object sender, DragEventArgs e)
     {
+        if (_viewModel.IsSmartMode)
+        {
+            ResetFileCardDropVisual(sender as Border);
+            e.Handled = true;
+            return;
+        }
+
         if (sender is not Border border || border.Tag is not DesktopItemViewModel targetItem ||
             !TryGetDraggedItemId(e, out var sourceItemId) ||
             !TryGetDraggedItemCategoryId(e, out var sourceCategoryId) ||
@@ -1296,7 +1571,7 @@ public partial class MainWindow : Window
 
     private async void FileCard_MouseMove(object sender, MouseEventArgs e)
     {
-        if (_dragCandidate is null || _dragCandidate.IsRecentItem || e.LeftButton != MouseButtonState.Pressed)
+        if (_viewModel.IsSmartMode || _dragCandidate is null || !_dragCandidate.CanReorder || e.LeftButton != MouseButtonState.Pressed)
         {
             return;
         }
@@ -1420,9 +1695,9 @@ public partial class MainWindow : Window
         SetAppearanceBrush("NewCategoryBorderBrush", transparent
             ? Colors.Transparent
             : Color.FromRgb(0x79, 0xB8, 0xF8));
-        SetAppearanceBrush("SettingsDialogSurfaceBrush", transparent
-            ? Color.FromArgb(0xB8, 0xFC, 0xFE, 0xFF)
-            : Colors.White);
+        // Keep the settings dialog opaque so the desktop wallpaper never
+        // shows through it, even when the main panel uses transparent mode.
+        SetAppearanceBrush("SettingsDialogSurfaceBrush", Colors.White);
         SetAppearanceBrush("SettingsDialogBorderBrush", transparent
             ? Color.FromArgb(0x90, 0xFF, 0xFF, 0xFF)
             : Color.FromRgb(0xD9, 0xE8, 0xF5));

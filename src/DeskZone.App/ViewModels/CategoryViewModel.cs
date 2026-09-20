@@ -7,6 +7,7 @@ public sealed class CategoryViewModel : BindableBase
 {
     private Category _model;
     private string _name;
+    private string _searchText = string.Empty;
     private bool _isExpanded;
     private bool _isSearchActive;
 
@@ -75,7 +76,10 @@ public sealed class CategoryViewModel : BindableBase
         Items.Clear();
         foreach (var item in items)
         {
-            Items.Add(new DesktopItemViewModel(item, isRecentItem: IsRecentlyOpened));
+            Items.Add(new DesktopItemViewModel(
+                item,
+                isRecentItem: IsRecentlyOpened,
+                canReorder: !IsSystem));
         }
 
         ApplySearch(string.Empty);
@@ -83,8 +87,9 @@ public sealed class CategoryViewModel : BindableBase
 
     public void ApplySearch(string searchText)
     {
+        _searchText = searchText ?? string.Empty;
         _isSearchActive = !string.IsNullOrWhiteSpace(searchText);
-        var query = searchText.Trim();
+        var query = _searchText.Trim();
 
         VisibleItems.Clear();
         foreach (var item in Items)
@@ -110,6 +115,10 @@ public sealed class CategoryViewModel : BindableBase
         }
 
         Items.Move(sourceIndex, targetIndex);
+        // The UI is bound to VisibleItems rather than Items. Reapply the
+        // current filter immediately so a successful drag is visible without
+        // requiring a later open/search/reload action.
+        ApplySearch(_searchText);
     }
 
     public void RestoreItems(IEnumerable<DesktopItemViewModel> items)

@@ -18,13 +18,16 @@ internal static class WindowsShellContextMenuService
     private const uint InvokeCommandUnicode = 0x00004000; // CMIC_MASK_UNICODE
     private const uint InvokeCommandPoint = 0x20000000; // CMIC_MASK_PTINVOKE
     private const int ShowNormal = 1;
+    private const uint WindowStylePopup = 0x80000000;
+    private const uint WindowExStyleToolWindow = 0x00000080;
+    private const int ShowWindowCommand = 5;
     private const uint WindowMessageNull = 0;
+    private static readonly Guid ShellFolderInterfaceGuid = new("000214E6-0000-0000-C000-000000000046");
     private static readonly Guid ContextMenuInterfaceId = new("000214e4-0000-0000-c000-000000000046");
 
     public static bool TryShow(string path, IntPtr ownerWindowHandle, int screenX, int screenY)
     {
         if (string.IsNullOrWhiteSpace(path) ||
-            ownerWindowHandle == IntPtr.Zero ||
             (!File.Exists(path) && !Directory.Exists(path)))
         {
             return false;
@@ -32,23 +35,46 @@ internal static class WindowsShellContextMenuService
 
         IntPtr itemIdList = IntPtr.Zero;
         IntPtr menuHandle = IntPtr.Zero;
+        IntPtr popupOwnerHandle = IntPtr.Zero;
         IContextMenu? contextMenu = null;
+        IShellFolder? parentFolder = null;
 
         try
         {
+            popupOwnerHandle = CreatePopupOwner(screenX, screenY);
+            var menuOwnerHandle = popupOwnerHandle == IntPtr.Zero
+                ? ownerWindowHandle
+                : popupOwnerHandle;
+
             var parseResult = SHParseDisplayName(path, IntPtr.Zero, out itemIdList, 0, out _);
             if (parseResult < 0 || itemIdList == IntPtr.Zero)
             {
                 return false;
             }
 
-            var contextMenuInterfaceId = ContextMenuInterfaceId;
+            // SHBindToParent returns the parent folder, not IContextMenu.
+            // The context-menu object must then be requested from that folder
+            // for the final child PIDL.
+            var shellFolderInterfaceId = ShellFolderInterfaceGuid;
             var bindResult = SHBindToParent(
                 itemIdList,
-                ref contextMenuInterfaceId,
-                out contextMenu,
+                ref shellFolderInterfaceId,
+                out parentFolder,
                 out var childIdList);
-            if (bindResult < 0 || contextMenu is null || childIdList == IntPtr.Zero)
+            if (bindResult < 0 || parentFolder is null || childIdList == IntPtr.Zero)
+            {
+                return false;
+            }
+
+            var contextMenuInterfaceId = ContextMenuInterfaceId;
+            var getContextMenuResult = parentFolder.GetUIObjectOf(
+                menuOwnerHandle,
+                1,
+                ref childIdList,
+                ref contextMenuInterfaceId,
+                IntPtr.Zero,
+                out contextMenu);
+            if (getContextMenuResult < 0 || contextMenu is null)
             {
                 return false;
             }
@@ -70,13 +96,14 @@ internal static class WindowsShellContextMenuService
                 return false;
             }
 
-            _ = SetForegroundWindow(ownerWindowHandle);
+            _ = ShowWindow(menuOwnerHandle, ShowWindowCommand);
+            _ = SetForegroundWindow(menuOwnerHandle);
             var selectedCommand = TrackPopupMenuEx(
                 menuHandle,
                 TrackPopupMenuReturnCommand | TrackPopupMenuRightButton | TrackPopupMenuNoNotify,
                 screenX,
                 screenY,
-                ownerWindowHandle,
+                menuOwnerHandle,
                 IntPtr.Zero);
 
             if (selectedCommand < ContextMenuFirstCommand || selectedCommand > ContextMenuLastCommand)
@@ -89,7 +116,7 @@ internal static class WindowsShellContextMenuService
             {
                 Size = (uint)Marshal.SizeOf<CommandInvocationInfo>(),
                 Mask = InvokeCommandUnicode | InvokeCommandPoint,
-                WindowHandle = ownerWindowHandle,
+                WindowHandle = menuOwnerHandle,
                 Verb = new IntPtr(commandOffset),
                 VerbUnicode = new IntPtr(commandOffset),
                 ShowCommand = ShowNormal,
@@ -101,7 +128,10 @@ internal static class WindowsShellContextMenuService
         }
         finally
         {
-            _ = PostMessage(ownerWindowHandle, WindowMessageNull, IntPtr.Zero, IntPtr.Zero);
+            var messageOwnerHandle = popupOwnerHandle == IntPtr.Zero
+                ? ownerWindowHandle
+                : popupOwnerHandle;
+            _ = PostMessage(messageOwnerHandle, WindowMessageNull, IntPtr.Zero, IntPtr.Zero);
             if (menuHandle != IntPtr.Zero)
             {
                 _ = DestroyMenu(menuHandle);
@@ -116,8 +146,33 @@ internal static class WindowsShellContextMenuService
             {
                 Marshal.FinalReleaseComObject(contextMenu);
             }
+
+            if (parentFolder is not null && Marshal.IsComObject(parentFolder))
+            {
+                Marshal.FinalReleaseComObject(parentFolder);
+            }
+
+            if (popupOwnerHandle != IntPtr.Zero)
+            {
+                _ = DestroyWindow(popupOwnerHandle);
+            }
         }
     }
+
+    private static IntPtr CreatePopupOwner(int screenX, int screenY) =>
+        CreateWindowEx(
+            WindowExStyleToolWindow,
+            "STATIC",
+            "DeskZone Shell Context Menu Owner",
+            WindowStylePopup,
+            screenX,
+            screenY,
+            1,
+            1,
+            IntPtr.Zero,
+            IntPtr.Zero,
+            GetModuleHandle(null),
+            IntPtr.Zero);
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     private static extern int SHParseDisplayName(
@@ -131,7 +186,7 @@ internal static class WindowsShellContextMenuService
     private static extern int SHBindToParent(
         IntPtr itemIdList,
         ref Guid interfaceId,
-        [MarshalAs(UnmanagedType.Interface)] out IContextMenu contextMenu,
+        [MarshalAs(UnmanagedType.Interface)] out IShellFolder parentFolder,
         out IntPtr childIdList);
 
     [DllImport("user32.dll")]
@@ -154,6 +209,32 @@ internal static class WindowsShellContextMenuService
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetForegroundWindow(IntPtr windowHandle);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CreateWindowEx(
+        uint extendedStyle,
+        string className,
+        string windowName,
+        uint style,
+        int x,
+        int y,
+        int width,
+        int height,
+        IntPtr parentWindowHandle,
+        IntPtr menuHandle,
+        IntPtr instanceHandle,
+        IntPtr parameters);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DestroyWindow(IntPtr windowHandle);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ShowWindow(IntPtr windowHandle, int command);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr GetModuleHandle(string? moduleName);
+
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool PostMessage(
@@ -161,6 +242,70 @@ internal static class WindowsShellContextMenuService
         uint message,
         IntPtr wParam,
         IntPtr lParam);
+
+    [ComImport]
+    [Guid("000214E6-0000-0000-C000-000000000046")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IShellFolder
+    {
+        [PreserveSig]
+        int ParseDisplayName(
+            IntPtr hwndOwner,
+            IntPtr bindContext,
+            [MarshalAs(UnmanagedType.LPWStr)] string displayName,
+            out uint characterCount,
+            out IntPtr itemIdList,
+            ref uint attributes);
+
+        [PreserveSig]
+        int EnumObjects(IntPtr hwndOwner, uint flags, out IntPtr enumIdList);
+
+        [PreserveSig]
+        int BindToObject(
+            IntPtr itemIdList,
+            IntPtr bindContext,
+            ref Guid interfaceId,
+            [MarshalAs(UnmanagedType.Interface)] out object result);
+
+        [PreserveSig]
+        int BindToStorage(
+            IntPtr itemIdList,
+            IntPtr bindContext,
+            ref Guid interfaceId,
+            [MarshalAs(UnmanagedType.Interface)] out object result);
+
+        [PreserveSig]
+        int CompareIds(IntPtr sortParameters, IntPtr firstItemIdList, IntPtr secondItemIdList);
+
+        [PreserveSig]
+        int CreateViewObject(
+            IntPtr hwndOwner,
+            ref Guid interfaceId,
+            [MarshalAs(UnmanagedType.Interface)] out object result);
+
+        [PreserveSig]
+        int GetAttributesOf(uint itemCount, ref IntPtr itemIdLists, ref uint attributes);
+
+        [PreserveSig]
+        int GetUIObjectOf(
+            IntPtr hwndOwner,
+            uint itemCount,
+            ref IntPtr itemIdLists,
+            ref Guid interfaceId,
+            IntPtr reserved,
+            [MarshalAs(UnmanagedType.Interface)] out IContextMenu contextMenu);
+
+        [PreserveSig]
+        int GetDisplayNameOf(IntPtr itemIdList, uint flags, IntPtr name);
+
+        [PreserveSig]
+        int SetNameOf(
+            IntPtr hwndOwner,
+            IntPtr itemIdList,
+            [MarshalAs(UnmanagedType.LPWStr)] string name,
+            uint flags,
+            out IntPtr newItemIdList);
+    }
 
     [ComImport]
     [Guid("000214e4-0000-0000-c000-000000000046")]
@@ -210,6 +355,7 @@ internal static class WindowsShellContextMenuService
         public IntPtr VerbUnicode;
         public IntPtr ParametersUnicode;
         public IntPtr DirectoryUnicode;
+        public IntPtr TitleUnicode;
         public ScreenPoint InvokePoint;
     }
 }

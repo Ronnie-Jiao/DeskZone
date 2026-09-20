@@ -5,10 +5,11 @@ namespace DeskZone.App.ViewModels;
 
 public sealed class DesktopItemViewModel
 {
-    public DesktopItemViewModel(DesktopItem model, bool isRecentItem = false)
+    public DesktopItemViewModel(DesktopItem model, bool isRecentItem = false, bool canReorder = true)
     {
         Model = model;
         IsRecentItem = isRecentItem;
+        CanReorder = canReorder && !isRecentItem;
         IconImage = WindowsShellIconProvider.GetIcon(model.ActivePath);
     }
 
@@ -18,7 +19,7 @@ public sealed class DesktopItemViewModel
     public string Path => Model.ActivePath;
     public bool IsMissing => Model.IsMissing;
     public bool IsRecentItem { get; }
-    public bool CanReorder => !IsRecentItem;
+    public bool CanReorder { get; }
     public ImageSource? IconImage { get; }
 
     public string IconGlyph => IconImage is not null

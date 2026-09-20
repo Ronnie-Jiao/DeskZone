@@ -14,6 +14,7 @@
 - [本地数据](#本地数据)
 - [安装、升级与数据保留](#安装升级与数据保留)
 - [开发与构建](#开发与构建)
+- [源码、调试版与安装版规则](#源码调试版与安装版规则)
 - [安全边界](#安全边界)
 - [常见问题](#常见问题)
 - [当前限制与路线图](#当前限制与路线图)
@@ -193,6 +194,42 @@ DeskZone 的程序文件和用户数据分开保存。仓库现在提供可执�
 安装脚本的使用方法见 [`../installer/README.md`](../installer/README.md)。
 
 ## 开发与构建
+
+### 源码、调试版与安装版规则
+
+`C:\develop\DeskZone` 是 DeskZone 的唯一开发源码库，也是 Git 提交的唯一入口。以后修改功能、修复缺陷、调整界面或更新文档时，必须优先修改这个目录中的源码；不要直接修改安装目录中的程序文件，也不要把生成的二进制文件当作源码保存。
+
+版本职责固定如下：
+
+| 版本 / 目录 | 用途 | 是否提交 Git |
+| --- | --- | --- |
+| `C:\develop\DeskZone` | 唯一源码、Wiki 和 Git 工作区 | 是，提交源码和文档 |
+| `src\DeskZone.App\bin\Debug\net10.0-windows` | 日常实时预览和调试 | 否，构建生成物 |
+| `src\DeskZone.App\bin\Release\net10.0-windows` | 发布前 Release 验证 | 否，构建生成物 |
+| `%LOCALAPPDATA%\Programs\DeskZone` | 用户安装版 | 否，只能由安装/升级流程更新 |
+
+Debug 与 Release 目录、安装目录中的 `.exe`、`.dll`、`.pdb` 和配置文件都属于输出产物。它们不能反向作为修改入口，也不能直接提交到 Git。安装版必须由源码构建并通过安装器同步；开发过程中不得直接覆盖安装版文件。
+
+日常预览流程必须从仓库根目录执行：
+
+```powershell
+# 先关闭其他 DeskZone 实例，避免单实例机制启动了旧安装版
+dotnet build DeskZone.sln -c Debug --no-restore
+Start-Process .\src\DeskZone.App\bin\Debug\net10.0-windows\DeskZone.exe
+```
+
+修改代码后，重新构建并重启上述 Debug 版本即可看到变化。不要通过桌面旧快捷方式验证源码改动；如果需要验证安装流程，应先完成源码 Git 提交，再单独构建 Release、发布并运行安装器。
+
+Git 提交前至少检查：
+
+```powershell
+git status --short
+git diff --check
+dotnet build DeskZone.sln -c Debug --no-restore
+dotnet build DeskZone.sln -c Release --no-restore
+```
+
+只提交经过核对的源码、测试和 `docs/` 文档改动。`bin/`、`obj/`、安装目录和本地数据库不属于提交内容；仓库的 `.gitignore` 已忽略主要构建输出。
 
 ### 环境要求
 

@@ -57,6 +57,11 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
         var panelHeight = windowRect.Bottom - windowRect.Top;
         var left = Math.Clamp(windowRect.Left, 0, Math.Max(0, screenWidth - panelWidth));
         var top = Math.Clamp(windowRect.Top, 0, Math.Max(0, screenHeight - panelHeight));
+        var hostPosition = new Point { X = left, Y = top };
+        if (!ScreenToClient(desktopOwner, ref hostPosition))
+        {
+            return false;
+        }
 
         var previousOwner = GetParent(windowHandle);
         var previousWindowStyle = GetWindowLongPtr(windowHandle, GwlStyle).ToInt64();
@@ -73,8 +78,8 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
         if (!SetWindowPos(
                 windowHandle,
                 IntPtr.Zero,
-                left,
-                top,
+                hostPosition.X,
+                hostPosition.Y,
                 0,
                 0,
                 SetWindowPosNoSize |
@@ -91,8 +96,8 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
         if (!SetWindowPos(
                 windowHandle,
                 IntPtr.Zero,
-                left,
-                top,
+                hostPosition.X,
+                hostPosition.Y,
                 0,
                 0,
                 SetWindowPosNoSize |
@@ -152,12 +157,19 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
 
         if (GetParent(windowHandle) == _desktopOwner)
         {
-            if (!GetWindowRect(windowHandle, out var rect) ||
+            if (!GetWindowRect(windowHandle, out var rect))
+            {
+                ClearAttachment();
+                return false;
+            }
+
+            var hostPosition = new Point { X = rect.Left, Y = rect.Top };
+            if (!ScreenToClient(_desktopOwner, ref hostPosition) ||
                 !SetWindowPos(
                     windowHandle,
                     IntPtr.Zero,
-                    rect.Left,
-                    rect.Top,
+                    hostPosition.X,
+                    hostPosition.Y,
                     0,
                     0,
                     SetWindowPosNoSize |
@@ -275,6 +287,13 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
         public int Bottom;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Point
+    {
+        public int X;
+        public int Y;
+    }
+
     private delegate bool EnumWindowsCallback(IntPtr windowHandle, IntPtr lParam);
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -320,6 +339,10 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetWindowRect(IntPtr windowHandle, out Rect rect);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ScreenToClient(IntPtr windowHandle, ref Point point);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

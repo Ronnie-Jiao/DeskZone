@@ -1,10 +1,17 @@
 using System.IO;
 using System.Collections.ObjectModel;
+using DeskZone.App;
 using DeskZone.Core.Models;
 using DeskZone.Core.Services;
 using DeskZone.Storage;
 
 namespace DeskZone.App.ViewModels;
+
+public enum WorkspaceDisplayMode
+{
+    Custom,
+    Smart
+}
 
 public sealed class WorkspaceViewModel : BindableBase
 {
@@ -13,6 +20,7 @@ public sealed class WorkspaceViewModel : BindableBase
     private string _statusMessage = "正在加载本地工作区…";
     private string _searchText = string.Empty;
     private bool _isBusy;
+    private WorkspaceDisplayMode _displayMode = WorkspaceDisplayMode.Custom;
 
     public WorkspaceViewModel(LocalBackend backend, IShellService shell)
     {
@@ -21,6 +29,29 @@ public sealed class WorkspaceViewModel : BindableBase
     }
 
     public ObservableCollection<CategoryViewModel> Categories { get; } = new();
+    public ObservableCollection<CategoryViewModel> SmartCategories { get; } = new();
+
+    public ObservableCollection<CategoryViewModel> DisplayedCategories =>
+        IsSmartMode ? SmartCategories : Categories;
+
+    public WorkspaceDisplayMode DisplayMode
+    {
+        get => _displayMode;
+        private set
+        {
+            if (!SetField(ref _displayMode, value))
+            {
+                return;
+            }
+
+            RaisePropertyChanged(nameof(IsCustomMode));
+            RaisePropertyChanged(nameof(IsSmartMode));
+            RaisePropertyChanged(nameof(DisplayedCategories));
+        }
+    }
+
+    public bool IsCustomMode => DisplayMode == WorkspaceDisplayMode.Custom;
+    public bool IsSmartMode => DisplayMode == WorkspaceDisplayMode.Smart;
 
     public string SearchText
     {
@@ -43,7 +74,45 @@ public sealed class WorkspaceViewModel : BindableBase
     public bool IsBusy
     {
         get => _isBusy;
-        private set => SetField(ref _isBusy, value);
+        private set
+        {
+            if (SetField(ref _isBusy, value))
+            {
+                RaisePropertyChanged(nameof(CanSwitchMode));
+            }
+        }
+    }
+
+    public bool CanSwitchMode => !IsBusy;
+
+    public async Task SetDisplayModeAsync(
+        WorkspaceDisplayMode mode,
+        CancellationToken cancellationToken = default)
+    {
+        if (IsBusy || DisplayMode == mode)
+        {
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            if (mode == WorkspaceDisplayMode.Smart)
+            {
+                await ReloadSmartGroupsAsync(cancellationToken);
+            }
+
+            DisplayMode = mode;
+            ApplySearchFilter();
+            UpdateFileSystemWatchPaths();
+            StatusMessage = mode == WorkspaceDisplayMode.Smart
+                ? "已切换到智能分组。"
+                : "已切换到自定义分组。";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -64,6 +133,11 @@ public sealed class WorkspaceViewModel : BindableBase
 
     public async Task<CategoryViewModel> CreateCategoryAsync(CancellationToken cancellationToken = default)
     {
+        if (IsSmartMode)
+        {
+            throw new InvalidOperationException("智能分组不可新建分类，请先切换到自定义。");
+        }
+
         var category = await _backend.Categories.CreateAsync("新分类", "#126FF7", cancellationToken);
         var viewModel = new CategoryViewModel(category, Array.Empty<DesktopItem>());
         Categories.Add(viewModel);
@@ -92,6 +166,11 @@ public sealed class WorkspaceViewModel : BindableBase
         string folderPath,
         CancellationToken cancellationToken = default)
     {
+        if (IsSmartMode)
+        {
+            throw new InvalidOperationException("智能分组不可新建分类，请先切换到自定义。");
+        }
+
         var normalizedPath = Path.GetFullPath(folderPath.Trim().Trim('"'));
         if (!Directory.Exists(normalizedPath))
         {
@@ -369,6 +448,22 @@ public sealed class WorkspaceViewModel : BindableBase
 
     public async Task<int> RefreshMissingStatesAsync(CancellationToken cancellationToken = default)
     {
+        if (IsSmartMode)
+        {
+            IsBusy = true;
+            try
+            {
+                await ReloadSmartGroupsAsync(cancellationToken);
+                UpdateFileSystemWatchPaths();
+                ApplySearchFilter();
+                return 0;
+            }
+            finally
+            {
+                IsBusy = false;
+            }
+        }
+
         if (Categories.Count == 0)
         {
             return 0;
@@ -435,17 +530,81 @@ public sealed class WorkspaceViewModel : BindableBase
             Categories.Add(new CategoryViewModel(category, items));
         }
 
+        if (IsSmartMode)
+        {
+            await ReloadSmartGroupsAsync(cancellationToken);
+        }
+
         ApplySearchFilter();
-        _backend.FileSystemChanges.UpdatePaths(
-            Categories
-                .Where(category => !category.IsRecentlyOpened)
-                .SelectMany(category => category.Items)
-                .Select(item => item.Path));
+        UpdateFileSystemWatchPaths();
+    }
+
+    private async Task ReloadSmartGroupsAsync(CancellationToken cancellationToken)
+    {
+        var scannedItems = await Task.Run(
+            SmartGroupingService.ScanDesktopItems,
+            cancellationToken);
+
+        var now = DateTimeOffset.UtcNow;
+        var smartCategories = new List<CategoryViewModel>();
+        foreach (var definition in SmartGroupingService.Definitions)
+        {
+            var categoryId = Guid.NewGuid();
+            IReadOnlyList<DesktopItem> items;
+            if (definition.Key == SystemCategoryKeys.RecentlyOpened)
+            {
+                items = await GetRecentlyOpenedDesktopItemsAsync(categoryId, cancellationToken);
+            }
+            else
+            {
+                var groupItems = scannedItems
+                    .Where(item => string.Equals(item.GroupKey, definition.Key, StringComparison.Ordinal))
+                    .ToArray();
+                if (groupItems.Length == 0)
+                {
+                    continue;
+                }
+
+                items = groupItems
+                    .Select((item, index) => new DesktopItem(
+                        Guid.NewGuid(),
+                        categoryId,
+                        DesktopItemMode.Reference,
+                        item.Path,
+                        null,
+                        item.DisplayName,
+                        item.ItemType,
+                        index,
+                        !File.Exists(item.Path) && !Directory.Exists(item.Path),
+                        now,
+                        now))
+                    .ToArray();
+            }
+
+            var category = new Category(
+                categoryId,
+                definition.Name,
+                definition.OrderIndex,
+                "grid",
+                "#126FF7",
+                false,
+                definition.Key == SystemCategoryKeys.RecentlyOpened ? "recent" : "smart",
+                definition.Key,
+                now,
+                now);
+            smartCategories.Add(new CategoryViewModel(category, items));
+        }
+
+        SmartCategories.Clear();
+        foreach (var category in smartCategories)
+        {
+            SmartCategories.Add(category);
+        }
     }
 
     private async Task ReloadRecentlyOpenedItemsAsync(CancellationToken cancellationToken)
     {
-        var category = Categories.FirstOrDefault(candidate => candidate.IsRecentlyOpened);
+        var category = DisplayedCategories.FirstOrDefault(candidate => candidate.IsRecentlyOpened);
         if (category is null)
         {
             return;
@@ -482,9 +641,26 @@ public sealed class WorkspaceViewModel : BindableBase
         ApplySearchFilter();
     }
 
+    private void UpdateFileSystemWatchPaths()
+    {
+        if (IsSmartMode)
+        {
+            var desktopWatchPath = SmartGroupingService.GetDesktopWatchPath();
+            _backend.FileSystemChanges.UpdatePaths(
+                desktopWatchPath is null ? Array.Empty<string>() : new[] { desktopWatchPath });
+            return;
+        }
+
+        _backend.FileSystemChanges.UpdatePaths(
+            Categories
+                .Where(category => !category.IsRecentlyOpened)
+                .SelectMany(category => category.Items)
+                .Select(item => item.Path));
+    }
+
     private void ApplySearchFilter()
     {
-        foreach (var category in Categories)
+        foreach (var category in DisplayedCategories)
         {
             category.ApplySearch(_searchText);
         }
