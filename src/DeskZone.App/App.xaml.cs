@@ -9,7 +9,11 @@ namespace DeskZone.App;
 
 public partial class App : System.Windows.Application
 {
+#if DEBUG
+    private const string SingleInstanceMutexName = "Local\\DeskZone.Debug.SingleInstance";
+#else
     private const string SingleInstanceMutexName = "Local\\DeskZone.SingleInstance";
+#endif
     private const int ShowWindowRestoreCommand = 9;
     private const int ShowWindowShowCommand = 5;
     private static readonly uint ShowExistingMessage = RegisterWindowMessage("DeskZone.ShowExisting");

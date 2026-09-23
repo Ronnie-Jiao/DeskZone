@@ -14,7 +14,6 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
     private const int SmCyScreen = 1;
     private const int GwlExStyle = -20;
     private const int GwlStyle = -16;
-    private const int GwlHwndParent = -8;
     private const long WsExToolWindow = 0x00000080L;
     private const long WsChild = 0x40000000L;
     private const long WsPopup = unchecked((long)0x80000000);
@@ -29,7 +28,7 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
 
     private IntPtr _attachedWindow;
     private IntPtr _desktopOwner;
-    private IntPtr _previousOwner;
+    private IntPtr _previousParent;
     private long _previousWindowStyle;
     private long _previousExtendedStyle;
 
@@ -63,7 +62,7 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
             return false;
         }
 
-        var previousOwner = GetParent(windowHandle);
+        var previousParent = GetParent(windowHandle);
         var previousWindowStyle = GetWindowLongPtr(windowHandle, GwlStyle).ToInt64();
         var previousExtendedStyle = GetWindowLongPtr(windowHandle, GwlExStyle).ToInt64();
         var componentWindowStyle = (previousWindowStyle | WsChild) & ~WsPopup;
@@ -71,7 +70,12 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
 
         _ = SetWindowLongPtr(windowHandle, GwlStyle, new IntPtr(componentWindowStyle));
         _ = SetWindowLongPtr(windowHandle, GwlExStyle, new IntPtr(componentExtendedStyle));
-        _ = SetWindowLongPtr(windowHandle, GwlHwndParent, desktopOwner);
+        _ = SetParent(windowHandle, desktopOwner);
+        if (GetParent(windowHandle) != desktopOwner)
+        {
+            RestoreWindow(windowHandle, previousParent, previousWindowStyle, previousExtendedStyle, windowRect);
+            return false;
+        }
 
         // Keep the component in the desktop layer, below ordinary applications
         // while remaining available when Win+D returns to the desktop.
@@ -86,7 +90,7 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
                 SetWindowPosNoActivate |
                 SetWindowPosFrameChanged))
         {
-            RestoreTopLevelWindow(windowHandle, previousOwner, previousWindowStyle, previousExtendedStyle, windowRect);
+            RestoreWindow(windowHandle, previousParent, previousWindowStyle, previousExtendedStyle, windowRect);
             return false;
         }
 
@@ -105,14 +109,14 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
                 SwpNoZOrder |
                 SetWindowPosShowWindow))
         {
-            RestoreTopLevelWindow(windowHandle, previousOwner, previousWindowStyle, previousExtendedStyle, windowRect);
+            RestoreWindow(windowHandle, previousParent, previousWindowStyle, previousExtendedStyle, windowRect);
             return false;
         }
 
         _ = ShowWindow(windowHandle, ShowWindowNoActivateCommand);
         _attachedWindow = windowHandle;
         _desktopOwner = desktopOwner;
-        _previousOwner = previousOwner;
+        _previousParent = previousParent;
         _previousWindowStyle = previousWindowStyle;
         _previousExtendedStyle = previousExtendedStyle;
         return true;
@@ -136,7 +140,7 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
             return false;
         }
 
-        RestoreTopLevelWindow(windowHandle, _previousOwner, _previousWindowStyle, _previousExtendedStyle, screenRect);
+        RestoreWindow(windowHandle, _previousParent, _previousWindowStyle, _previousExtendedStyle, screenRect);
         ClearAttachment();
         return true;
     }
@@ -246,14 +250,14 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
                width >= screenWidth / 2 && height >= screenHeight / 2;
     }
 
-    private static void RestoreTopLevelWindow(
+    private static void RestoreWindow(
         IntPtr windowHandle,
-        IntPtr previousOwner,
+        IntPtr previousParent,
         long previousWindowStyle,
         long previousExtendedStyle,
         Rect screenRect)
     {
-        _ = SetWindowLongPtr(windowHandle, GwlHwndParent, previousOwner);
+        _ = SetParent(windowHandle, previousParent);
         _ = SetWindowLongPtr(windowHandle, GwlStyle, new IntPtr(previousWindowStyle));
         _ = SetWindowLongPtr(windowHandle, GwlExStyle, new IntPtr(previousExtendedStyle));
         _ = SetWindowPos(
@@ -265,6 +269,7 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
             0,
             SetWindowPosNoSize |
             SetWindowPosNoActivate |
+            SwpNoZOrder |
             SetWindowPosFrameChanged |
             SetWindowPosShowWindow);
     }
@@ -273,7 +278,7 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
     {
         _attachedWindow = IntPtr.Zero;
         _desktopOwner = IntPtr.Zero;
-        _previousOwner = IntPtr.Zero;
+        _previousParent = IntPtr.Zero;
         _previousWindowStyle = 0;
         _previousExtendedStyle = 0;
     }
@@ -318,6 +323,9 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern IntPtr GetParent(IntPtr windowHandle);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetParent(IntPtr childWindow, IntPtr newParentWindow);
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
     private static extern IntPtr GetWindowLongPtr(IntPtr windowHandle, int index);

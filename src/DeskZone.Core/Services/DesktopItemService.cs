@@ -7,6 +7,7 @@ namespace DeskZone.Core.Services;
 
 public sealed class DesktopItemService : IDesktopItemService
 {
+    private const int MaxDisplayNameLength = 260;
     private readonly IWorkspaceStore _store;
     private readonly string _managedStorageDirectory;
 
@@ -33,6 +34,44 @@ public sealed class DesktopItemService : IDesktopItemService
         return _store.RecordRecentlyOpenedItemAsync(
             new RecentOpenedItem(item.Id, item.ActivePath, item.DisplayName, item.ItemType, DateTimeOffset.UtcNow),
             cancellationToken);
+    }
+
+    public async Task<DesktopItem> RenameDisplayNameAsync(
+        DesktopItem item,
+        string displayName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        var normalizedName = NormalizeDisplayName(displayName);
+        var storedItem = await _store.GetItemAsync(item.Id, cancellationToken)
+            ?? throw new DeskZoneValidationException("要重命名的文件入口不存在或已被移除。");
+
+        if (string.Equals(storedItem.DisplayName, normalizedName, StringComparison.Ordinal))
+        {
+            return storedItem;
+        }
+
+        var updated = storedItem with
+        {
+            DisplayName = normalizedName,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        await _store.UpdateItemAsync(updated, cancellationToken);
+        await _store.UpdateRecentlyOpenedDisplayNameAsync(updated.Id, updated.DisplayName, cancellationToken);
+        await LogAsync(
+            OperationType.RenameFile,
+            updated.ActivePath,
+            null,
+            new
+            {
+                itemId = updated.Id,
+                oldDisplayName = storedItem.DisplayName,
+                newDisplayName = updated.DisplayName,
+                displayOnly = true
+            },
+            canUndo: false,
+            cancellationToken);
+        return updated;
     }
 
     public async Task<AddReferencesResult> AddReferencesAsync(Guid categoryId, IEnumerable<string> paths, CancellationToken cancellationToken = default)
@@ -550,5 +589,26 @@ public sealed class DesktopItemService : IDesktopItemService
         var trimmed = Path.TrimEndingDirectorySeparator(fullPath);
         var name = Path.GetFileName(trimmed);
         return string.IsNullOrWhiteSpace(name) ? trimmed : name;
+    }
+
+    private static string NormalizeDisplayName(string displayName)
+    {
+        var result = (displayName ?? string.Empty).Trim();
+        if (result.Length == 0)
+        {
+            throw new DeskZoneValidationException("显示名称不能为空。");
+        }
+
+        if (result.Length > MaxDisplayNameLength)
+        {
+            throw new DeskZoneValidationException($"显示名称不能超过 {MaxDisplayNameLength} 个字符。");
+        }
+
+        if (result.Any(char.IsControl))
+        {
+            throw new DeskZoneValidationException("显示名称不能包含换行或控制字符。");
+        }
+
+        return result;
     }
 }

@@ -249,6 +249,23 @@ public sealed class SqliteWorkspaceStore : IWorkspaceStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    public async Task UpdateRecentlyOpenedDisplayNameAsync(
+        Guid itemId,
+        string displayName,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _connections.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE recently_opened_items
+            SET display_name = $displayName
+            WHERE item_id = $itemId;
+            """;
+        command.Parameters.AddWithValue("$displayName", displayName);
+        command.Parameters.AddWithValue("$itemId", itemId.ToString("D"));
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task<int> GetNextItemOrderAsync(Guid categoryId, CancellationToken cancellationToken = default)
     {
         await using var connection = await _connections.OpenAsync(cancellationToken);
@@ -430,6 +447,12 @@ public sealed class SqliteWorkspaceStore : IWorkspaceStore
                 command.CommandText = "DELETE FROM items WHERE id = $id AND item_mode = 'Reference';";
                 command.Parameters.AddWithValue("$id", itemId.ToString("D"));
                 await command.ExecuteNonQueryAsync(cancellationToken);
+
+                await using var recentCommand = connection.CreateCommand();
+                recentCommand.Transaction = transaction;
+                recentCommand.CommandText = "DELETE FROM recently_opened_items WHERE item_id = $id;";
+                recentCommand.Parameters.AddWithValue("$id", itemId.ToString("D"));
+                await recentCommand.ExecuteNonQueryAsync(cancellationToken);
             }
             await transaction.CommitAsync(cancellationToken);
         }
@@ -458,6 +481,12 @@ public sealed class SqliteWorkspaceStore : IWorkspaceStore
                 command.CommandText = "DELETE FROM items WHERE id = $id;";
                 command.Parameters.AddWithValue("$id", itemId.ToString("D"));
                 await command.ExecuteNonQueryAsync(cancellationToken);
+
+                await using var recentCommand = connection.CreateCommand();
+                recentCommand.Transaction = transaction;
+                recentCommand.CommandText = "DELETE FROM recently_opened_items WHERE item_id = $id;";
+                recentCommand.Parameters.AddWithValue("$id", itemId.ToString("D"));
+                await recentCommand.ExecuteNonQueryAsync(cancellationToken);
             }
             await transaction.CommitAsync(cancellationToken);
         }

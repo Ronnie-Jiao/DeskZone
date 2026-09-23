@@ -23,6 +23,7 @@ public interface IWorkspaceStore
     Task<DesktopItem?> FindItemByOriginalPathAsync(string originalPath, DesktopItemMode mode, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<RecentOpenedItem>> GetRecentlyOpenedItemsAsync(int maximumCount, CancellationToken cancellationToken = default);
     Task RecordRecentlyOpenedItemAsync(RecentOpenedItem item, CancellationToken cancellationToken = default);
+    Task UpdateRecentlyOpenedDisplayNameAsync(Guid itemId, string displayName, CancellationToken cancellationToken = default);
     Task<int> GetNextItemOrderAsync(Guid categoryId, CancellationToken cancellationToken = default);
     Task InsertItemsAsync(IReadOnlyCollection<DesktopItem> items, CancellationToken cancellationToken = default);
     Task ReorderItemsAsync(Guid categoryId, IReadOnlyList<Guid> orderedItemIds, CancellationToken cancellationToken = default);

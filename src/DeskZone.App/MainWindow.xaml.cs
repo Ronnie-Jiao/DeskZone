@@ -56,9 +56,12 @@ public partial class MainWindow : Window
     private const int SizeMinimized = 1;
     private const long WsChild = 0x40000000L;
     private const uint MouseKeyLeftButton = 0x0001;
+    private static readonly IntPtr HwndBottom = new(1);
     private const uint SwpNoSize = 0x0001;
+    private const uint SwpNoMove = 0x0002;
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
+    private const uint SwpNoOwnerZOrder = 0x0200;
     private const uint SwpShowWindow = 0x0040;
 
     [StructLayout(LayoutKind.Sequential)]
@@ -135,6 +138,7 @@ public partial class MainWindow : Window
     private Drawing.Icon? _trayIconImage;
     private HwndSource? _windowSource;
     private SearchInputWindow? _searchInputWindow;
+    private ItemNameInputWindow? _itemNameInputWindow;
 
     private bool _applyingLayout;
     private bool _allowClose;
@@ -143,7 +147,7 @@ public partial class MainWindow : Window
     private IntPtr _titleBarDragWindowHandle;
     private ScreenPoint _titleBarDragStartCursor;
     private WindowRect _titleBarDragStartWindow;
-    private bool _desktopPinned;
+    private bool _desktopPinned = true;
     private bool _userRequestedMinimize;
     private bool _desktopRestorePending;
     private bool _isPanelCollapsed;
@@ -154,6 +158,7 @@ public partial class MainWindow : Window
     private bool _applyingSettings;
     private bool _locked;
     private DesktopItemViewModel? _dragCandidate;
+    private TextBox? _editingItemNameTextBox;
     private Point _dragStartPoint;
     private CategoryViewModel? _categoryDragCandidate;
     private Point _categoryDragStartPoint;
@@ -174,6 +179,10 @@ public partial class MainWindow : Window
         AddHandler(
             UIElement.PreviewMouseRightButtonUpEvent,
             new MouseButtonEventHandler(MainWindow_PreviewMouseRightButtonUp),
+            handledEventsToo: true);
+        AddHandler(
+            UIElement.PreviewMouseLeftButtonDownEvent,
+            new MouseButtonEventHandler(MainWindow_PreviewMouseLeftButtonDown),
             handledEventsToo: true);
 
         _backend = backend;
@@ -222,6 +231,8 @@ public partial class MainWindow : Window
         {
             _searchInputWindow?.Close();
             _searchInputWindow = null;
+            _itemNameInputWindow?.CloseSilently();
+            _itemNameInputWindow = null;
             _fileSystemRefreshTimer.Stop();
             _backend.FileSystemChanges.Changed -= FileSystemChanges_Changed;
             DisposeTrayIcon();
@@ -234,6 +245,27 @@ public partial class MainWindow : Window
     {
         _windowSource = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
         _windowSource?.AddHook(MainWindowMessageHook);
+
+        if (!_desktopPinned)
+        {
+            return;
+        }
+
+        var handle = new WindowInteropHelper(this).Handle;
+        Topmost = false;
+        ShowInTaskbar = false;
+        var attached = _desktopHost.TryAttach(handle);
+        if (!attached)
+        {
+            _ = SetWindowPos(
+                handle,
+                HwndBottom,
+                0,
+                0,
+                0,
+                0,
+                SwpNoMove | SwpNoSize | SwpNoActivate | SwpNoOwnerZOrder | SwpShowWindow);
+        }
     }
 
     private IntPtr MainWindowMessageHook(
@@ -329,19 +361,20 @@ public partial class MainWindow : Window
         _userRequestedMinimize = false;
         _desktopRestoreTimer.Stop();
         _desktopRestorePending = false;
-        EnsureWindowVisible();
         if (_desktopPinned)
         {
+            Topmost = false;
+            ShowInTaskbar = false;
+            EnsureWindowVisible();
             EnsureDesktopAttachment();
             _desktopHostTimer.Start();
+            return;
         }
 
-        var handle = new WindowInteropHelper(this).Handle;
-        if (!_desktopPinned || !_desktopHost.IsAttached(handle))
-        {
-            ShowInTaskbar = true;
-            Activate();
-        }
+        EnsureWindowVisible();
+        ShowInTaskbar = true;
+        Opacity = StablePanelOpacity;
+        Activate();
     }
 
     private async Task HideToTrayAsync()
@@ -412,9 +445,6 @@ public partial class MainWindow : Window
             Width = Math.Max(MinWidth, panel.WidthDip);
             Height = Math.Max(430, panel.HeightDip);
             _expandedHeight = Height;
-            // A translucent layered window exposes changing content behind the desktop panel
-            // and looks like flickering/ghost frames. Keep the rounded surface opaque.
-            Opacity = StablePanelOpacity;
             ApplyLockedState(panel.IsLocked, scheduleSave: false);
             ApplyPanelCollapsed(panel.IsCollapsed, restoreExpandedHeight: false);
 
@@ -428,17 +458,13 @@ public partial class MainWindow : Window
                 ShowInTaskbar = false;
                 EnsureDesktopAttachment();
                 _desktopHostTimer.Start();
-                // Give WPF one turn to finalize its native window state, then
-                // establish the desktop layer once. This is deliberately not
-                // a recurring raise, so screenshot overlays stay above us.
-                await Task.Delay(650);
-                RefreshDesktopAttachmentAfterLoad();
             }
             else
             {
                 Left = Math.Max(0, (SystemParameters.WorkArea.Width - Width) / 2);
                 Top = Math.Max(0, (SystemParameters.WorkArea.Height - Height) / 2);
                 ShowInTaskbar = true;
+                Opacity = StablePanelOpacity;
             }
         }
         catch (Exception ex)
@@ -1088,6 +1114,152 @@ public partial class MainWindow : Window
         textBox.SelectAll();
     }
 
+    private void ItemName_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not TextBox textBox || textBox.Tag is not DesktopItemViewModel || !textBox.IsReadOnly)
+        {
+            return;
+        }
+
+        if (e.ClickCount >= 2)
+        {
+            BeginItemNameEdit(textBox);
+            e.Handled = true;
+        }
+    }
+
+    private void MainWindow_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        var textBox = FindAncestor<TextBox>(e.OriginalSource as DependencyObject);
+        if (_editingItemNameTextBox is { } editingTextBox && !ReferenceEquals(editingTextBox, textBox))
+        {
+            _ = CompleteItemNameEditAsync();
+        }
+
+        if (e.ClickCount < 2)
+        {
+            return;
+        }
+
+        if (textBox?.Tag is not DesktopItemViewModel || !textBox.IsReadOnly)
+        {
+            return;
+        }
+
+        BeginItemNameEdit(textBox);
+        e.Handled = true;
+    }
+
+    private void BeginItemNameEdit(TextBox textBox)
+    {
+        if (_editingItemNameTextBox is { } existingTextBox && !ReferenceEquals(existingTextBox, textBox))
+        {
+            _ = CompleteItemNameEditAsync();
+        }
+
+        if (textBox.Tag is not DesktopItemViewModel item)
+        {
+            return;
+        }
+
+        _editingItemNameTextBox = textBox;
+        _dragCandidate = null;
+        textBox.ToolTip = "按 Enter 保存，按 Esc 取消";
+
+        var inputWindow = GetItemNameInputWindow();
+        PositionItemNameInputWindow(inputWindow, textBox);
+        // The editable window is positioned on top of this TextBox. Keep the
+        // original display-only text in the layout, but hide it while typing
+        // so the two rendered strings never overlap.
+        textBox.Visibility = Visibility.Hidden;
+        inputWindow.InputBox.Foreground = (Brush)FindResource("ContentPrimaryBrush");
+        inputWindow.InputBox.CaretBrush = (Brush)FindResource("ActionBrush");
+        inputWindow.InputBorder.BorderBrush = (Brush)FindResource("ActionBrush");
+        inputWindow.InputBorder.Background = (Brush)FindResource("FileItemSurfaceBrush");
+        inputWindow.InputBox.Text = item.Name;
+
+        if (!inputWindow.IsVisible)
+        {
+            inputWindow.Show();
+        }
+
+        var inputWindowHandle = new WindowInteropHelper(inputWindow).Handle;
+        _ = SetForegroundWindow(inputWindowHandle);
+        _ = inputWindow.Activate();
+        inputWindow.InputBox.Focus();
+        Keyboard.Focus(inputWindow.InputBox);
+        inputWindow.InputBox.SelectAll();
+    }
+
+    private ItemNameInputWindow GetItemNameInputWindow()
+    {
+        if (_itemNameInputWindow is not null)
+        {
+            return _itemNameInputWindow;
+        }
+
+        _itemNameInputWindow = new ItemNameInputWindow();
+        _itemNameInputWindow.CommitRequested += ItemNameInputWindow_CommitRequested;
+        _itemNameInputWindow.CancelRequested += ItemNameInputWindow_CancelRequested;
+        return _itemNameInputWindow;
+    }
+
+    private void PositionItemNameInputWindow(ItemNameInputWindow inputWindow, TextBox textBox)
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        if (handle == IntPtr.Zero || !GetWindowRect(handle, out var windowRect))
+        {
+            return;
+        }
+
+        var relativePoint = textBox.TranslatePoint(new Point(0, 0), this);
+        var dpi = VisualTreeHelper.GetDpi(this);
+        inputWindow.Left = windowRect.Left / dpi.DpiScaleX + relativePoint.X;
+        inputWindow.Top = windowRect.Top / dpi.DpiScaleY + relativePoint.Y;
+        inputWindow.Width = Math.Max(1, textBox.ActualWidth);
+        inputWindow.Height = Math.Max(1, textBox.ActualHeight);
+    }
+
+    private async Task CompleteItemNameEditAsync(bool cancel = false)
+    {
+        if (_editingItemNameTextBox?.Tag is not DesktopItemViewModel item)
+        {
+            return;
+        }
+
+        var inputWindow = _itemNameInputWindow;
+        var displayName = inputWindow?.InputBox.Text ?? item.Name;
+        var editingTextBox = _editingItemNameTextBox;
+        editingTextBox.ToolTip = "双击修改显示名称（不会修改磁盘文件）";
+        editingTextBox.Visibility = Visibility.Visible;
+        _editingItemNameTextBox = null;
+        inputWindow?.HideSilently();
+
+        if (cancel)
+        {
+            return;
+        }
+
+        try
+        {
+            await _viewModel.RenameItemAsync(item, displayName);
+        }
+        catch (Exception ex)
+        {
+            ShowError("修改项目名称失败", ex);
+        }
+    }
+
+    private void ItemNameInputWindow_CommitRequested(object? sender, EventArgs e)
+    {
+        _ = CompleteItemNameEditAsync();
+    }
+
+    private void ItemNameInputWindow_CancelRequested(object? sender, EventArgs e)
+    {
+        _ = CompleteItemNameEditAsync(cancel: true);
+    }
+
     private void ScheduleCategoryToggle(CategoryViewModel category)
     {
         _pendingCategoryToggle = category;
@@ -1427,6 +1599,25 @@ public partial class MainWindow : Window
             return;
         }
 
+        var itemNameTextBox = FindAncestor<TextBox>(e.OriginalSource as DependencyObject);
+        if (itemNameTextBox?.Tag is DesktopItemViewModel nameItem && ReferenceEquals(nameItem, item))
+        {
+            if (!itemNameTextBox.IsReadOnly)
+            {
+                _dragCandidate = null;
+                e.Handled = true;
+                return;
+            }
+
+            if (e.ClickCount >= 2)
+            {
+                BeginItemNameEdit(itemNameTextBox);
+                _dragCandidate = null;
+                e.Handled = true;
+                return;
+            }
+        }
+
         if (e.ClickCount == 1 && item.CanReorder && !_viewModel.IsSmartMode)
         {
             _dragCandidate = item;
@@ -1455,7 +1646,7 @@ public partial class MainWindow : Window
         _dragCandidate = null;
     }
 
-    private void MainWindow_PreviewMouseRightButtonUp(object sender, MouseButtonEventArgs e)
+    private async void MainWindow_PreviewMouseRightButtonUp(object sender, MouseButtonEventArgs e)
     {
         var border = FindAncestor<Border>(e.OriginalSource as DependencyObject);
         if (border?.Tag is not DesktopItemViewModel item)
@@ -1477,14 +1668,29 @@ public partial class MainWindow : Window
             screenY = cursorPoint.Y;
         }
 
+        var itemPath = item.Path;
+        var existedBefore = IsFileSystemPathPresent(itemPath);
         var shown = _shell.ShowContextMenu(
-            item.Path,
+            itemPath,
             new WindowInteropHelper(this).Handle,
             screenX,
             screenY);
         if (!shown)
         {
             e.Handled = false;
+            return;
+        }
+
+        if (existedBefore && !IsFileSystemPathPresent(itemPath))
+        {
+            try
+            {
+                await _viewModel.RemoveDeletedReferenceAsync(item);
+            }
+            catch (Exception ex)
+            {
+                ShowError("清理已删除项目失败", ex);
+            }
         }
     }
 
@@ -2192,6 +2398,8 @@ public partial class MainWindow : Window
         if (!_desktopPinned)
         {
             ShowInTaskbar = true;
+            Opacity = StablePanelOpacity;
+            IsHitTestVisible = true;
             return;
         }
 
@@ -2206,30 +2414,29 @@ public partial class MainWindow : Window
         // owns its desktop-layer placement so ordinary applications can cover it.
         if (_desktopHost.IsAttached(handle))
         {
+            Opacity = StablePanelOpacity;
+            IsHitTestVisible = true;
             return;
         }
 
         ShowInTaskbar = false;
         EnsureWindowVisible();
-        _ = _desktopHost.TryAttach(handle);
-    }
-
-    private void RefreshDesktopAttachmentAfterLoad()
-    {
-        if (!_desktopPinned)
+        var attached = _desktopHost.TryAttach(handle) && _desktopHost.IsAttached(handle);
+        Opacity = StablePanelOpacity;
+        IsHitTestVisible = true;
+        if (attached)
         {
             return;
         }
 
-        var handle = new WindowInteropHelper(this).Handle;
-        if (handle != IntPtr.Zero)
-        {
-            // WPF finalizes native styles after Loaded. Reapply the component
-            // host once after that finalization, not on a periodic timer.
-            _ = _desktopHost.TryDetach(handle);
-        }
-
-        EnsureDesktopAttachment();
+        _ = SetWindowPos(
+            handle,
+            HwndBottom,
+            0,
+            0,
+            0,
+            0,
+            SwpNoMove | SwpNoSize | SwpNoActivate | SwpNoOwnerZOrder | SwpShowWindow);
     }
 
     private void MainWindow_StateChanged(object? sender, EventArgs e)
@@ -2265,12 +2472,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        EnsureWindowVisible();
-        var handle = new WindowInteropHelper(this).Handle;
-        if (!_desktopHost.IsAttached(handle))
-        {
-            ShowInTaskbar = true;
-        }
+        EnsureDesktopAttachment();
     }
 
     private void EnsureWindowVisible()
@@ -2398,6 +2600,9 @@ public partial class MainWindow : Window
         folderPath = candidate;
         return true;
     }
+
+    private static bool IsFileSystemPathPresent(string path) =>
+        File.Exists(path) || Directory.Exists(path);
 
     private static T? FindAncestor<T>(DependencyObject? source) where T : DependencyObject
     {

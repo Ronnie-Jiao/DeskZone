@@ -227,6 +227,30 @@ public sealed class WorkspaceViewModel : BindableBase
         StatusMessage = $"分类已重命名为“{updated.Name}”。";
     }
 
+    public async Task RenameItemAsync(
+        DesktopItemViewModel item,
+        string displayName,
+        CancellationToken cancellationToken = default)
+    {
+        var trimmed = displayName.Trim();
+        if (string.Equals(trimmed, item.PersistedName, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            var updated = await _backend.Items.RenameDisplayNameAsync(item.Model, trimmed, cancellationToken);
+            await ReloadAsync(cancellationToken);
+            StatusMessage = $"已将“{item.PersistedName}”的显示名称修改为“{updated.DisplayName}”。";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
     public async Task ToggleCategoryAsync(CategoryViewModel category, CancellationToken cancellationToken = default)
     {
         var expanded = !category.IsExpanded;
@@ -523,6 +547,29 @@ public sealed class WorkspaceViewModel : BindableBase
         }
 
         await _shell.RevealInExplorerAsync(item.Path, cancellationToken);
+    }
+
+    public async Task RemoveDeletedReferenceAsync(
+        DesktopItemViewModel item,
+        CancellationToken cancellationToken = default)
+    {
+        if (item.Model.ItemMode == DesktopItemMode.Managed)
+        {
+            await ReloadAsync(cancellationToken);
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            await _backend.Items.RemoveReferencesAsync(new[] { item.Id }, cancellationToken);
+            await ReloadAsync(cancellationToken);
+            StatusMessage = $"已从 DeskZone 移除已删除的“{item.Name}”，其最近打开记录也已清理。";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     private async Task ReloadAsync(CancellationToken cancellationToken)

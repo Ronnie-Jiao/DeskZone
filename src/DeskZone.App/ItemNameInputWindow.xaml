@@ -1,0 +1,32 @@
+<Window x:Class="DeskZone.App.ItemNameInputWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        ShowActivated="True"
+        Topmost="True"
+        AllowsTransparency="True"
+        Background="Transparent">
+    <Border x:Name="ItemNameInputBorder"
+            Background="#01000000"
+            BorderThickness="1">
+        <TextBox x:Name="ItemNameInputBox"
+                 Padding="0"
+                 BorderThickness="0"
+                 Background="Transparent"
+                 Foreground="White"
+                 CaretBrush="White"
+                 FontSize="10.5"
+                 HorizontalContentAlignment="Center"
+                 VerticalContentAlignment="Center"
+                 TextAlignment="Center"
+                 TextWrapping="Wrap"
+                 AcceptsReturn="False"
+                 Focusable="True"
+                 IsTabStop="True"
+                 ScrollViewer.HorizontalScrollBarVisibility="Hidden"
+                 ScrollViewer.VerticalScrollBarVisibility="Hidden"
+                 KeyDown="ItemNameInputBox_KeyDown" />
+    </Border>
+</Window>

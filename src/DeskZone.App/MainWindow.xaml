@@ -14,6 +14,8 @@
         ResizeMode="CanResize"
         WindowStartupLocation="Manual"
         Background="Transparent"
+        ShowInTaskbar="False"
+        ShowActivated="False"
         Loaded="Window_Loaded"
         Closing="Window_Closing"
         LocationChanged="Window_LayoutChanged"
@@ -636,15 +638,29 @@
                                                                            FontSize="24"
                                                                            Text="{Binding IconGlyph}" />
                                                             </Grid>
-                                                            <TextBlock Margin="2,4,2,0"
-                                                                       HorizontalAlignment="Stretch"
-                                                                       TextAlignment="Center"
-                                                                       TextWrapping="Wrap"
-                                                                       TextTrimming="CharacterEllipsis"
-                                                                       MaxHeight="32"
-                                                                       FontSize="10.5"
-                                                                       Foreground="{DynamicResource ContentPrimaryBrush}"
-                                                                       Text="{Binding Name}" />
+                                                            <TextBox Margin="2,4,2,0"
+                                                                     Padding="0"
+                                                                     HorizontalAlignment="Stretch"
+                                                                     HorizontalContentAlignment="Center"
+                                                                     VerticalContentAlignment="Center"
+                                                                     BorderThickness="0"
+                                                                     Background="Transparent"
+                                                                     Foreground="{DynamicResource ContentPrimaryBrush}"
+                                                                     CaretBrush="{DynamicResource ActionBrush}"
+                                                                     FontSize="10.5"
+                                                                     IsReadOnly="True"
+                                                                     Focusable="True"
+                                                                     IsTabStop="True"
+                                                                      Cursor="Hand"
+                                                                      TextAlignment="Center"
+                                                                      TextWrapping="Wrap"
+                                                                      AcceptsReturn="False"
+                                                                     ScrollViewer.HorizontalScrollBarVisibility="Hidden"
+                                                                     ScrollViewer.VerticalScrollBarVisibility="Hidden"
+                                                                     Text="{Binding Name, Mode=OneWay}"
+                                                                     Tag="{Binding}"
+                                                                     ToolTip="双击修改显示名称（不会修改磁盘文件）"
+                                                                     PreviewMouseLeftButtonDown="ItemName_PreviewMouseLeftButtonDown" />
                                                         </StackPanel>
                                                     </Border>
                                                 </DataTemplate>
