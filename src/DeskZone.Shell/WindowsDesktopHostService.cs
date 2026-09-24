@@ -224,6 +224,19 @@ public sealed class WindowsDesktopHostService : IDesktopHostService
                 return false;
             }
 
+            // Some Explorer layouts expose the full-screen desktop WorkerW
+            // as a child of Progman rather than as a top-level sibling. That
+            // WorkerW is behind SHELLDLL_DefView in the same child z-order, so
+            // attaching to it leaves the component covered by the icon view.
+            // Use the full-screen desktop view itself as the host so the
+            // component can render above desktop icons but below app windows.
+            var childWorkerWindow = FindWindowEx(topLevelWindow, IntPtr.Zero, "WorkerW", null);
+            if (childWorkerWindow != IntPtr.Zero && IsUsableDesktopHost(childWorkerWindow))
+            {
+                desktopShellWindow = desktopView;
+                return false;
+            }
+
             if (desktopShellWindow == IntPtr.Zero && IsUsableDesktopHost(topLevelWindow))
             {
                 desktopShellWindow = topLevelWindow;

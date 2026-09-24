@@ -139,8 +139,8 @@ DeskZone/
 `DeskZone.Shell.WindowsDesktopHostService` 负责：
 
 1. 查找包含 `SHELLDLL_DefView` 的桌面窗口。
-2. 定位可用的 `WorkerW` / 桌面宿主。
-3. 将 DeskZone 窗口改为真正的 `WS_CHILD` 桌面子窗口并挂载到 WorkerW。
+2. 优先定位可用的顶层 `WorkerW`；若 Explorer 只提供位于图标视图后方的子级 `WorkerW`，则改用 `SHELLDLL_DefView` 作为宿主。
+3. 将 DeskZone 窗口改为真正的 `WS_CHILD` 桌面子窗口并挂载到选定的桌面宿主，使面板显示在桌面图标层上方、普通应用窗口下方。
 4. 将窗口放在桌面层，低于普通应用窗口。
 5. 在 Explorer 重启、`Win+D` 或宿主失效时保持或重新建立挂载。
 
