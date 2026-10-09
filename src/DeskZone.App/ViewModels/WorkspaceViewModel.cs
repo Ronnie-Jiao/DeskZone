@@ -15,6 +15,9 @@ public enum WorkspaceDisplayMode
 
 public sealed class WorkspaceViewModel : BindableBase
 {
+    /// <summary>“最近打开”系统分类最多显示的对象数量。</summary>
+    public const int RecentItemsDisplayLimit = 15;
+
     private readonly LocalBackend _backend;
     private readonly IShellService _shell;
     private string _statusMessage = "正在加载本地工作区…";
@@ -46,6 +49,7 @@ public sealed class WorkspaceViewModel : BindableBase
 
             RaisePropertyChanged(nameof(IsCustomMode));
             RaisePropertyChanged(nameof(IsSmartMode));
+            RaisePropertyChanged(nameof(CanSmartImport));
             RaisePropertyChanged(nameof(DisplayedCategories));
         }
     }
@@ -79,11 +83,14 @@ public sealed class WorkspaceViewModel : BindableBase
             if (SetField(ref _isBusy, value))
             {
                 RaisePropertyChanged(nameof(CanSwitchMode));
+                RaisePropertyChanged(nameof(CanSmartImport));
             }
         }
     }
 
     public bool CanSwitchMode => !IsBusy;
+
+    public bool CanSmartImport => IsCustomMode && !IsBusy;
 
     public async Task SetDisplayModeAsync(
         WorkspaceDisplayMode mode,
@@ -385,6 +392,61 @@ public sealed class WorkspaceViewModel : BindableBase
                 ? $"已移动 {result.Moved} 个项目到“{category.Name}”。"
                 : $"已移动 {result.Moved} 个项目到“{category.Name}”，{result.Failures.Count} 个项目未移动。";
             return result;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    /// <summary>
+    /// 智能导入：枚举桌面顶层项目，按名称与类型特征匹配到用户自定义分类，并剪切移动到对应分类。
+    /// 匹配不上的项目保留在桌面。返回 null 表示当前还没有可用的自定义分类。
+    /// </summary>
+    public async Task<SmartImportResult?> SmartImportFromDesktopAsync(CancellationToken cancellationToken = default)
+    {
+        if (IsSmartMode)
+        {
+            throw new InvalidOperationException("智能导入只适用于自定义分类，请先切换到“自定义”。");
+        }
+
+        var targets = Categories
+            .Where(category => !category.IsSystem)
+            .Select((category, index) => new SmartImportTarget(category.Id, category.Name, index))
+            .ToArray();
+        if (targets.Length == 0)
+        {
+            StatusMessage = "还没有创建分类，请先新建分类再使用智能导入。";
+            return null;
+        }
+
+        var plan = SmartImportService.BuildPlan(targets, SmartImportService.EnumerateDesktopPaths());
+        if (plan.Assignments.Count == 0)
+        {
+            StatusMessage = plan.CandidateCount == 0
+                ? "桌面上没有可以导入的项目。"
+                : $"桌面上的 {plan.CandidateCount} 个项目都没有匹配到分类，已保留在桌面。";
+            return new SmartImportResult(plan.CandidateCount, 0, 0, plan.Assignments, plan.UnmatchedPaths);
+        }
+
+        IsBusy = true;
+        try
+        {
+            var moved = 0;
+            var failed = 0;
+            foreach (var assignment in plan.Assignments)
+            {
+                var result = await _backend.Items.MovePathsIntoCategoryAsync(
+                    assignment.CategoryId,
+                    assignment.Paths,
+                    cancellationToken);
+                moved += result.Moved;
+                failed += result.Failures.Count;
+            }
+
+            await ReloadAsync(cancellationToken);
+            StatusMessage = $"智能导入完成：已移动 {moved} 个项目到 {plan.Assignments.Count} 个分类。";
+            return new SmartImportResult(plan.CandidateCount, moved, failed, plan.Assignments, plan.UnmatchedPaths);
         }
         finally
         {
@@ -701,7 +763,7 @@ public sealed class WorkspaceViewModel : BindableBase
         Guid categoryId,
         CancellationToken cancellationToken)
     {
-        var recentItems = await _backend.Items.ListRecentlyOpenedAsync(10, cancellationToken);
+        var recentItems = await _backend.Items.ListRecentlyOpenedAsync(RecentItemsDisplayLimit, cancellationToken);
         return recentItems
             .Select((item, index) => new DesktopItem(
                 item.ItemId,

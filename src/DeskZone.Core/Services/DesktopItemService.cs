@@ -24,7 +24,7 @@ public sealed class DesktopItemService : IDesktopItemService
     }
 
     public Task<IReadOnlyList<RecentOpenedItem>> ListRecentlyOpenedAsync(
-        int maximumCount = 10,
+        int maximumCount = 15,
         CancellationToken cancellationToken = default) =>
         _store.GetRecentlyOpenedItemsAsync(Math.Max(maximumCount, 1), cancellationToken);
 

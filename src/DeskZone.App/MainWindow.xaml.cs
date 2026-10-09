@@ -688,6 +688,65 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void SmartImport_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var result = await _viewModel.SmartImportFromDesktopAsync();
+            if (result is null)
+            {
+                MessageBox.Show(
+                    this,
+                    "当前还没有自定义分类。请先点击“＋”新建分类，再使用智能导入。",
+                    "智能导入",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            ShowSmartImportResult(result);
+        }
+        catch (Exception ex)
+        {
+            ShowError("智能导入失败", ex);
+        }
+    }
+
+    private void ShowSmartImportResult(SmartImportResult result)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine($"桌面共找到 {result.CandidateCount} 个可导入项目。");
+
+        if (result.MovedCount > 0)
+        {
+            builder.AppendLine($"已按名称智能剪切到以下分类（共 {result.MovedCount} 个）：");
+            foreach (var assignment in result.Assignments)
+            {
+                builder.AppendLine($"　· {assignment.CategoryName}：{assignment.Paths.Count} 个");
+            }
+        }
+
+        if (result.FailedCount > 0)
+        {
+            builder.AppendLine($"{result.FailedCount} 个项目移动失败，仍保留在桌面。");
+        }
+
+        if (result.UnmatchedPaths.Count > 0)
+        {
+            builder.AppendLine($"{result.UnmatchedPaths.Count} 个项目没有匹配到分类，已保留在桌面：");
+            builder.AppendLine("　" + string.Join(
+                "、",
+                result.UnmatchedPaths.Select(path => Path.GetFileName(Path.TrimEndingDirectorySeparator(path)))));
+        }
+
+        MessageBox.Show(
+            this,
+            builder.ToString().TrimEnd(),
+            "智能导入结果",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
+    }
+
     private async void CustomMode_Click(object sender, RoutedEventArgs e) =>
         await SwitchWorkspaceModeAsync(WorkspaceDisplayMode.Custom);
 
@@ -1459,6 +1518,15 @@ public partial class MainWindow : Window
     private void Category_DragOver(object sender, DragEventArgs e) =>
         UpdateCategoryDropVisual(sender, e);
 
+    private void CategoryHeader_DragEnter(object sender, DragEventArgs e) =>
+        UpdateCategoryHeaderDropVisual(sender, e);
+
+    private void CategoryHeader_DragOver(object sender, DragEventArgs e) =>
+        UpdateCategoryHeaderDropVisual(sender, e);
+
+    private void CategoryHeader_DragLeave(object sender, DragEventArgs e) =>
+        ResetCategoryHeaderDropVisual(sender as Border);
+
     private static bool HasFileDrop(DragEventArgs e) =>
         e.Data.GetDataPresent(DataFormats.FileDrop) &&
         e.Data.GetData(DataFormats.FileDrop) is string[] paths &&
@@ -1514,6 +1582,60 @@ public partial class MainWindow : Window
         }
     }
 
+    private void UpdateCategoryHeaderDropVisual(object sender, DragEventArgs e)
+    {
+        if (sender is not Border border || border.Tag is not CategoryViewModel category)
+        {
+            return;
+        }
+
+        if (category.IsSystem)
+        {
+            e.Effects = DragDropEffects.None;
+            ResetCategoryHeaderDropVisual(border);
+            return;
+        }
+
+        var isCategoryDrag = TryGetDraggedCategoryId(e, out _);
+        var isItemDrag = TryGetDraggedItemId(e, out _);
+        if (isCategoryDrag || isItemDrag || HasFileDrop(e))
+        {
+            var requestedEffect = isCategoryDrag || isItemDrag
+                ? DragDropEffects.Move
+                : DragDropEffects.Copy;
+            if ((e.AllowedEffects & requestedEffect) == 0)
+            {
+                e.Effects = DragDropEffects.None;
+                ResetCategoryHeaderDropVisual(border);
+                e.Handled = true;
+                return;
+            }
+
+            e.Effects = requestedEffect;
+            border.BorderBrush = (Brush)FindResource("SkyBrush");
+            border.BorderThickness = new Thickness(1);
+            border.Background = new SolidColorBrush(Color.FromRgb(238, 248, 255));
+            e.Handled = true;
+        }
+        else
+        {
+            e.Effects = DragDropEffects.None;
+            ResetCategoryHeaderDropVisual(border);
+        }
+    }
+
+    private void ResetCategoryHeaderDropVisual(Border? border)
+    {
+        if (border is null)
+        {
+            return;
+        }
+
+        border.ClearValue(Border.BorderBrushProperty);
+        border.ClearValue(Border.BorderThicknessProperty);
+        border.SetResourceReference(Border.BackgroundProperty, "CategoryHeaderSurfaceBrush");
+    }
+
     private void Category_DragLeave(object sender, DragEventArgs e)
     {
         ResetDropVisual(sender as Border);
@@ -1521,12 +1643,35 @@ public partial class MainWindow : Window
 
     private async void Category_Drop(object sender, DragEventArgs e)
     {
-        if (sender is not Border border || border.Tag is not CategoryViewModel category || category.IsSystem)
+        await HandleCategoryDropAsync(sender, e, isHeaderDrop: false);
+    }
+
+    private async void CategoryHeader_Drop(object sender, DragEventArgs e)
+    {
+        await HandleCategoryDropAsync(sender, e, isHeaderDrop: true);
+    }
+
+    private async Task HandleCategoryDropAsync(object sender, DragEventArgs e, bool isHeaderDrop)
+    {
+        if (sender is not Border border || border.Tag is not CategoryViewModel category)
         {
             return;
         }
 
-        ResetDropVisual(border);
+        if (isHeaderDrop)
+        {
+            ResetCategoryHeaderDropVisual(border);
+        }
+        else
+        {
+            ResetDropVisual(border);
+        }
+
+        e.Handled = true;
+        if (category.IsSystem)
+        {
+            return;
+        }
 
         if (TryGetDraggedCategoryId(e, out var sourceCategoryId))
         {
@@ -1542,10 +1687,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (e.Data.GetDataPresent(InternalItemDataFormat) &&
-            Guid.TryParse(e.Data.GetData(InternalItemDataFormat) as string, out var itemId))
+        if (TryGetDraggedItemId(e, out var itemId))
         {
-        if (e.Data.GetDataPresent(InternalItemCategoryDataFormat) &&
+            if (e.Data.GetDataPresent(InternalItemCategoryDataFormat) &&
                 Guid.TryParse(e.Data.GetData(InternalItemCategoryDataFormat) as string, out var sourceItemCategoryId) &&
                 sourceItemCategoryId == category.Id)
             {
@@ -1584,11 +1728,18 @@ public partial class MainWindow : Window
 
         try
         {
-            await _viewModel.MovePathsIntoCategoryAsync(category, paths);
+            if (isHeaderDrop)
+            {
+                await _viewModel.AddReferencesAsync(category, paths);
+            }
+            else
+            {
+                await _viewModel.MovePathsIntoCategoryAsync(category, paths);
+            }
         }
         catch (Exception ex)
         {
-            ShowError("移动文件失败", ex);
+            ShowError(isHeaderDrop ? "添加文件引用失败" : "移动文件失败", ex);
         }
     }
 

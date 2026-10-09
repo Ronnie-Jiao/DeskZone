@@ -64,7 +64,7 @@ internal static class SmartGroupingService
     public static bool IsMissing(DesktopItem item) =>
         !File.Exists(item.ActivePath) && !Directory.Exists(item.ActivePath);
 
-    private static bool IsArchiveOrInstaller(string extension, string path)
+    internal static bool IsArchiveOrInstaller(string extension, string path)
     {
         if (ArchiveExtensions.Contains(extension))
         {
@@ -87,7 +87,7 @@ internal static class SmartGroupingService
     private static bool IsApplication(string extension) =>
         ApplicationExtensions.Contains(extension);
 
-    private static string? TryResolveShortcutTarget(string path)
+    internal static string? TryResolveShortcutTarget(string path)
     {
         if (!string.Equals(Path.GetExtension(path), ".lnk", StringComparison.OrdinalIgnoreCase))
         {
@@ -157,25 +157,25 @@ internal static class SmartGroupingService
         }
     }
 
-    private static readonly HashSet<string> ApplicationExtensions = new(StringComparer.OrdinalIgnoreCase)
+    internal static readonly HashSet<string> ApplicationExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".appref-ms", ".bat", ".cmd", ".com", ".exe", ".ps1", ".vbs"
     };
 
-    private static readonly HashSet<string> ArchiveExtensions = new(StringComparer.OrdinalIgnoreCase)
+    internal static readonly HashSet<string> ArchiveExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".7z", ".appx", ".appxbundle", ".bz2", ".cab", ".dmg", ".gz", ".img", ".iso",
         ".msi", ".msix", ".pkg", ".rar", ".tar", ".wim", ".xz", ".zip"
     };
 
-    private static readonly HashSet<string> DocumentExtensions = new(StringComparer.OrdinalIgnoreCase)
+    internal static readonly HashSet<string> DocumentExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".csv", ".doc", ".docm", ".docx", ".markdown", ".md", ".odp", ".ods", ".odt",
         ".pdf", ".ppt", ".pptm", ".pptx", ".rtf", ".tex", ".tsv", ".txt", ".xls", ".xlsm",
         ".xlsx", ".xltx"
     };
 
-    private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+    internal static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".ai", ".avif", ".bmp", ".fig", ".gif", ".heic", ".ico", ".jpeg", ".jpg", ".png",
         ".psd", ".svg", ".tif", ".tiff", ".webp"
