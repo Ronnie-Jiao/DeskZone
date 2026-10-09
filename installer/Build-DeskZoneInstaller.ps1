@@ -79,8 +79,9 @@ try {
     Copy-Item -LiteralPath $folderIconAsset -Destination (Join-Path $stagePath 'InstallerFolderIcon.png') -Force
     Get-ChildItem -LiteralPath $OutputPath -Force -File | Copy-Item -Destination $stagePath -Force
 
-    # Microsoft.Data.Sqlite 的 Windows 原生库位于 runtimes 子目录。
-    # 安装包只需要目标 Windows 架构的运行库，避免把其它平台的文件一并打进去。
+    # 有些 .NET 发布布局把 SQLite 原生库放在 runtimes 子目录，
+    # 另一些布局会将当前目标架构的原生库直接放在发布目录根部。
+    # 安装包只携带当前目标架构所需的文件，避免混入其它平台运行库。
     $runtimeSourcePath = Join-Path $OutputPath (Join-Path 'runtimes' $RuntimeIdentifier)
     if (Test-Path -LiteralPath $runtimeSourcePath -PathType Container) {
         $runtimeStageRoot = Join-Path $stagePath 'runtimes'
@@ -88,9 +89,12 @@ try {
         Copy-Item -LiteralPath $runtimeSourcePath -Destination $runtimeStageRoot -Recurse -Force
     }
 
-    $nativeSqlitePath = Join-Path $stagePath (Join-Path (Join-Path 'runtimes' $RuntimeIdentifier) 'native\e_sqlite3.dll')
-    if (-not (Test-Path -LiteralPath $nativeSqlitePath -PathType Leaf)) {
-        throw "安装包暂存目录中缺少 SQLite Windows 原生库：$nativeSqlitePath"
+    $nativeSqliteCandidates = @(
+        (Join-Path $stagePath 'e_sqlite3.dll'),
+        (Join-Path $stagePath (Join-Path (Join-Path 'runtimes' $RuntimeIdentifier) 'native\e_sqlite3.dll'))
+    )
+    if (-not ($nativeSqliteCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })) {
+        throw "安装包暂存目录中缺少 SQLite Windows 原生库；已检查：$($nativeSqliteCandidates -join '、')"
     }
 
     $files = @(Get-ChildItem -LiteralPath $stagePath -Force -File -Recurse | Sort-Object FullName)
