@@ -9,15 +9,15 @@ namespace DeskZone.App;
 
 public partial class App : System.Windows.Application
 {
-#if DEBUG
-    private const string SingleInstanceMutexName = "Local\\DeskZone.Debug.SingleInstance";
-#else
+    // All builds share the same user data and desktop panel, so they must also
+    // share one instance lock. Keep the existing release name for compatibility.
     private const string SingleInstanceMutexName = "Local\\DeskZone.SingleInstance";
-#endif
+    private const string LegacyDebugMutexName = "Local\\DeskZone.Debug.SingleInstance";
     private const int ShowWindowRestoreCommand = 9;
     private const int ShowWindowShowCommand = 5;
     private static readonly uint ShowExistingMessage = RegisterWindowMessage("DeskZone.ShowExisting");
     private static Mutex? _singleInstanceMutex;
+    private static Mutex? _legacyDebugMutex;
 
     public LocalBackend Backend { get; private set; } = null!;
 
@@ -63,15 +63,27 @@ public partial class App : System.Windows.Application
             return;
         }
 
+        // Also reserve the old Debug lock so pre-fix preview executables cannot
+        // create another panel beside an updated Debug or installed build.
+        _legacyDebugMutex = new Mutex(true, LegacyDebugMutexName, out var legacyCreatedNew);
+        if (!legacyCreatedNew)
+        {
+            SignalExistingInstance();
+            Shutdown();
+            return;
+        }
+
         try
         {
-            Backend = LocalBackend.CreateDefault();
+            var shortcutTargetResolver = new WindowsShortcutTargetResolver();
+            Backend = LocalBackend.CreateDefault(shortcutTargetResolver);
             await Backend.InitializeAsync();
 
             var window = new MainWindow(
                 Backend,
                 new WindowsShellService(),
-                new WindowsDesktopHostService());
+                new WindowsDesktopHostService(),
+                shortcutTargetResolver);
             MainWindow = window;
             window.Show();
         }
@@ -89,6 +101,8 @@ public partial class App : System.Windows.Application
     protected override void OnExit(ExitEventArgs e)
     {
         Backend?.Dispose();
+        _legacyDebugMutex?.Dispose();
+        _legacyDebugMutex = null;
         _singleInstanceMutex?.Dispose();
         _singleInstanceMutex = null;
         base.OnExit(e);

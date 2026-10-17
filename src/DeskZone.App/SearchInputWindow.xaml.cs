@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Input;
+using DeskZone.App.ViewModels;
 using TextBox = System.Windows.Controls.TextBox;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 
@@ -18,6 +19,22 @@ public partial class SearchInputWindow : Window
     }
 
     public TextBox InputBox => SearchInputBox;
+
+    private void SearchClearButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is WorkspaceViewModel workspace)
+        {
+            workspace.SearchText = string.Empty;
+        }
+        else
+        {
+            SearchInputBox.Clear();
+        }
+
+        SearchInputBox.Focus();
+        Keyboard.Focus(SearchInputBox);
+        e.Handled = true;
+    }
 
     private void SearchInputWindow_Deactivated(object? sender, EventArgs e) =>
         Dismiss();

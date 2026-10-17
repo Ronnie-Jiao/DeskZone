@@ -4,18 +4,14 @@ using System.Windows.Data;
 
 namespace DeskZone.App;
 
-public sealed class AdaptiveCardWidthConverter : IMultiValueConverter
+public sealed class AdaptiveCardWidthConverter : IValueConverter
 {
     private const double MinimumCardWidth = 78;
     private const double HorizontalMargin = 6;
 
-    public object Convert(object[] values, Type targetType, object? parameter, CultureInfo culture)
+    public object Convert(object value, Type targetType, object? parameter, CultureInfo culture)
     {
-        if (values.Length < 2 ||
-            values[0] is not double availableWidth ||
-            values[1] is not int itemCount ||
-            availableWidth <= 0 ||
-            itemCount <= 0)
+        if (value is not double availableWidth || availableWidth <= 0)
         {
             return MinimumCardWidth;
         }
@@ -23,12 +19,14 @@ public sealed class AdaptiveCardWidthConverter : IMultiValueConverter
         var possibleColumns = Math.Max(
             1,
             (int)Math.Floor((availableWidth + HorizontalMargin) / (MinimumCardWidth + HorizontalMargin)));
-        var columns = Math.Min(itemCount, possibleColumns);
+        // Keep every card at the width of a full row. WrapPanel then fills
+        // each row from the left and wraps only when no column remains.
+        var columns = possibleColumns;
         return Math.Max(
             MinimumCardWidth,
             (availableWidth - (columns * HorizontalMargin)) / columns);
     }
 
-    public object[] ConvertBack(object value, Type[] targetTypes, object? parameter, CultureInfo culture) =>
+    public object ConvertBack(object value, Type targetType, object? parameter, CultureInfo culture) =>
         throw new NotSupportedException();
 }

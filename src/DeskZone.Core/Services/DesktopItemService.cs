@@ -10,11 +10,16 @@ public sealed class DesktopItemService : IDesktopItemService
     private const int MaxDisplayNameLength = 260;
     private readonly IWorkspaceStore _store;
     private readonly string _managedStorageDirectory;
+    private readonly IShortcutTargetResolver? _shortcutTargetResolver;
 
-    public DesktopItemService(IWorkspaceStore store, string managedStorageDirectory)
+    public DesktopItemService(
+        IWorkspaceStore store,
+        string managedStorageDirectory,
+        IShortcutTargetResolver? shortcutTargetResolver = null)
     {
         _store = store;
         _managedStorageDirectory = Path.GetFullPath(managedStorageDirectory);
+        _shortcutTargetResolver = shortcutTargetResolver;
     }
 
     public async Task<IReadOnlyList<DesktopItem>> ListByCategoryAsync(Guid categoryId, CancellationToken cancellationToken = default)
@@ -450,6 +455,55 @@ public sealed class DesktopItemService : IDesktopItemService
         }
     }
 
+    public async Task<int> RemoveMissingItemsAsync(
+        IReadOnlyCollection<Guid> itemIds,
+        CancellationToken cancellationToken = default)
+    {
+        if (itemIds.Count == 0)
+        {
+            return 0;
+        }
+
+        var missingItems = new List<DesktopItem>(itemIds.Count);
+        foreach (var itemId in itemIds.Distinct())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var item = await _store.GetItemAsync(itemId, cancellationToken);
+            if (item is not null && IsItemDefinitelyMissing(item))
+            {
+                missingItems.Add(item);
+            }
+        }
+
+        if (missingItems.Count == 0)
+        {
+            return 0;
+        }
+
+        // Delete only DeskZone references and recent-history rows. Neither the
+        // shortcut file nor its (already missing) target is touched here.
+        await _store.DeleteItemsAsync(missingItems.Select(item => item.Id).ToArray(), cancellationToken);
+        foreach (var item in missingItems)
+        {
+            try
+            {
+                await LogAsync(
+                    OperationType.ForgetMissingItem,
+                    item.ActivePath,
+                    null,
+                    new { itemId = item.Id, categoryId = item.CategoryId, snapshot = item },
+                    canUndo: false,
+                    cancellationToken);
+            }
+            catch
+            {
+                // A log failure must not leave a deleted item visible in the UI.
+            }
+        }
+
+        return missingItems.Count;
+    }
+
     public async Task<int> RefreshMissingStateAsync(Guid categoryId, CancellationToken cancellationToken = default)
     {
         var items = await _store.GetItemsByCategoryAsync(categoryId, cancellationToken);
@@ -505,6 +559,52 @@ public sealed class DesktopItemService : IDesktopItemService
     }
 
     private static bool PathExists(string path) => File.Exists(path) || Directory.Exists(path);
+
+    private static bool IsPathDefinitelyMissing(string path)
+    {
+        string? root;
+        try
+        {
+            root = Path.GetPathRoot(Path.GetFullPath(path));
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException)
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+        {
+            return false;
+        }
+
+        try
+        {
+            _ = File.GetAttributes(path);
+            return false;
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return true;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            // An inaccessible path is not proof that the user's item was deleted.
+            return false;
+        }
+    }
+
+    private bool IsItemDefinitelyMissing(DesktopItem item)
+    {
+        if (IsPathDefinitelyMissing(item.ActivePath))
+        {
+            return true;
+        }
+
+        return item.ItemType == DesktopItemType.Shortcut &&
+               _shortcutTargetResolver is not null &&
+               _shortcutTargetResolver.TryResolveTarget(item.ActivePath, out var targetPath) &&
+               IsPathDefinitelyMissing(targetPath);
+    }
 
     private static bool PathsEqual(string left, string right) =>
         string.Equals(

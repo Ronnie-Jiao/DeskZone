@@ -14,5 +14,6 @@ public interface IDesktopItemService
     Task MoveToCategoryAsync(IReadOnlyCollection<Guid> itemIds, Guid targetCategoryId, CancellationToken cancellationToken = default);
     Task ReorderAsync(Guid categoryId, IReadOnlyList<Guid> orderedItemIds, CancellationToken cancellationToken = default);
     Task RemoveReferencesAsync(IReadOnlyCollection<Guid> itemIds, CancellationToken cancellationToken = default);
+    Task<int> RemoveMissingItemsAsync(IReadOnlyCollection<Guid> itemIds, CancellationToken cancellationToken = default);
     Task<int> RefreshMissingStateAsync(Guid categoryId, CancellationToken cancellationToken = default);
 }

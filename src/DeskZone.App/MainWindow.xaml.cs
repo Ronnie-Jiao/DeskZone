@@ -133,6 +133,8 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _desktopRestoreTimer;
     private readonly DispatcherTimer _categoryClickTimer;
     private readonly DispatcherTimer _fileSystemRefreshTimer;
+    private readonly DispatcherTimer _shortcutCleanupTimer;
+    private readonly HashSet<string> _pendingDeletedPaths = new(StringComparer.OrdinalIgnoreCase);
     private Forms.NotifyIcon? _trayIcon;
     private Forms.ContextMenuStrip? _trayMenu;
     private Drawing.Icon? _trayIconImage;
@@ -169,7 +171,8 @@ public partial class MainWindow : Window
     public MainWindow(
         LocalBackend backend,
         IShellService shell,
-        IDesktopHostService desktopHost)
+        IDesktopHostService desktopHost,
+        IShortcutTargetResolver? shortcutTargetResolver = null)
     {
         InitializeComponent();
 
@@ -188,7 +191,7 @@ public partial class MainWindow : Window
         _backend = backend;
         _shell = shell;
         _desktopHost = desktopHost;
-        _viewModel = new WorkspaceViewModel(backend, shell);
+        _viewModel = new WorkspaceViewModel(backend, shell, shortcutTargetResolver);
         DataContext = _viewModel;
 
         _layoutSaveTimer = new DispatcherTimer
@@ -224,6 +227,12 @@ public partial class MainWindow : Window
             Interval = TimeSpan.FromMilliseconds(350)
         };
         _fileSystemRefreshTimer.Tick += FileSystemRefreshTimer_Tick;
+
+        _shortcutCleanupTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMinutes(1)
+        };
+        _shortcutCleanupTimer.Tick += ShortcutCleanupTimer_Tick;
         _backend.FileSystemChanges.Changed += FileSystemChanges_Changed;
 
         InitializeTrayIcon();
@@ -234,6 +243,7 @@ public partial class MainWindow : Window
             _itemNameInputWindow?.CloseSilently();
             _itemNameInputWindow = null;
             _fileSystemRefreshTimer.Stop();
+            _shortcutCleanupTimer.Stop();
             _backend.FileSystemChanges.Changed -= FileSystemChanges_Changed;
             DisposeTrayIcon();
         };
@@ -421,6 +431,7 @@ public partial class MainWindow : Window
         try
         {
             await _viewModel.InitializeAsync();
+            _shortcutCleanupTimer.Start();
 
             var savedTransparentMode = await _backend.Settings.LoadAsync<bool?>(TransparentModeSettingKey);
             _transparentMode = savedTransparentMode ?? true;
@@ -770,6 +781,12 @@ public partial class MainWindow : Window
         UpdateSearchPlaceholder();
     }
 
+    private void SearchClearButton_Click(object sender, RoutedEventArgs e)
+    {
+        SearchTextBox.Clear();
+        e.Handled = true;
+    }
+
     private void SearchTextBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         ShowSearchInputWindow();
@@ -860,15 +877,21 @@ public partial class MainWindow : Window
 
     private void FileSystemChanges_Changed(object? sender, FileSystemChangeEventArgs e)
     {
+        var deletedPaths = e.DeletedPaths.ToArray();
         try
         {
             Dispatcher.BeginInvoke(
                 DispatcherPriority.Background,
                 new Action(() =>
                 {
-                    if (!IsLoaded || _handlingWindowClose)
+                    if (_handlingWindowClose)
                     {
                         return;
+                    }
+
+                    foreach (var path in deletedPaths)
+                    {
+                        _pendingDeletedPaths.Add(path);
                     }
 
                     _fileSystemRefreshTimer.Stop();
@@ -884,7 +907,7 @@ public partial class MainWindow : Window
     private async void FileSystemRefreshTimer_Tick(object? sender, EventArgs e)
     {
         _fileSystemRefreshTimer.Stop();
-        if (!IsLoaded || _handlingWindowClose)
+        if (_handlingWindowClose)
         {
             return;
         }
@@ -897,6 +920,13 @@ public partial class MainWindow : Window
 
         try
         {
+            if (_pendingDeletedPaths.Count > 0)
+            {
+                var deletedPaths = _pendingDeletedPaths.ToArray();
+                _pendingDeletedPaths.Clear();
+                await _viewModel.RemoveDeletedItemsAsync(deletedPaths);
+            }
+
             await _viewModel.RefreshMissingStatesAsync();
         }
         catch (OperationCanceledException)
@@ -906,6 +936,27 @@ public partial class MainWindow : Window
         catch
         {
             // File-system notifications are best-effort and must not interrupt the panel.
+        }
+    }
+
+    private async void ShortcutCleanupTimer_Tick(object? sender, EventArgs e)
+    {
+        if (_handlingWindowClose || _viewModel.IsBusy)
+        {
+            return;
+        }
+
+        try
+        {
+            await _viewModel.RemoveMissingShortcutTargetsAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            // The window is closing or a newer operation superseded this scan.
+        }
+        catch
+        {
+            // A failed shortcut scan must not interrupt the panel.
         }
     }
 
@@ -1592,36 +1643,35 @@ public partial class MainWindow : Window
         if (category.IsSystem)
         {
             e.Effects = DragDropEffects.None;
+            e.Handled = true;
             ResetCategoryHeaderDropVisual(border);
             return;
         }
 
-        var isCategoryDrag = TryGetDraggedCategoryId(e, out _);
-        var isItemDrag = TryGetDraggedItemId(e, out _);
-        if (isCategoryDrag || isItemDrag || HasFileDrop(e))
+        // Handle the preview event before TextBox's class handlers. A read-only
+        // name field otherwise rejects the drag before the header sees it.
+        e.Effects = GetCategoryHeaderDropEffect(e);
+        e.Handled = true;
+        if (e.Effects != DragDropEffects.None)
         {
-            var requestedEffect = isCategoryDrag || isItemDrag
-                ? DragDropEffects.Move
-                : DragDropEffects.Copy;
-            if ((e.AllowedEffects & requestedEffect) == 0)
-            {
-                e.Effects = DragDropEffects.None;
-                ResetCategoryHeaderDropVisual(border);
-                e.Handled = true;
-                return;
-            }
-
-            e.Effects = requestedEffect;
             border.BorderBrush = (Brush)FindResource("SkyBrush");
             border.BorderThickness = new Thickness(1);
             border.Background = new SolidColorBrush(Color.FromRgb(238, 248, 255));
-            e.Handled = true;
         }
         else
         {
-            e.Effects = DragDropEffects.None;
             ResetCategoryHeaderDropVisual(border);
         }
+    }
+
+    private static DragDropEffects GetCategoryHeaderDropEffect(DragEventArgs e)
+    {
+        var requestedEffect = TryGetDraggedCategoryId(e, out _) || TryGetDraggedItemId(e, out _)
+            ? DragDropEffects.Move
+            : HasFileDrop(e) ? DragDropEffects.Move : DragDropEffects.None;
+        return (e.AllowedEffects & requestedEffect) != 0
+            ? requestedEffect
+            : DragDropEffects.None;
     }
 
     private void ResetCategoryHeaderDropVisual(Border? border)
@@ -1641,14 +1691,44 @@ public partial class MainWindow : Window
         ResetDropVisual(sender as Border);
     }
 
-    private async void Category_Drop(object sender, DragEventArgs e)
+    private void Category_Drop(object sender, DragEventArgs e) =>
+        CompleteCategoryDrop(sender, e, isHeaderDrop: false);
+
+    private void CategoryHeader_Drop(object sender, DragEventArgs e)
     {
-        await HandleCategoryDropAsync(sender, e, isHeaderDrop: false);
+        // The header and category body both collect dropped files into managed
+        // storage. Finish that move before WPF returns Move to Explorer.
+        e.Effects = GetCategoryHeaderDropEffect(e);
+        if (e.Effects == DragDropEffects.None)
+        {
+            e.Handled = true;
+            ResetCategoryHeaderDropVisual(sender as Border);
+            return;
+        }
+
+        CompleteCategoryDrop(sender, e, isHeaderDrop: true);
     }
 
-    private async void CategoryHeader_Drop(object sender, DragEventArgs e)
+    private void CompleteCategoryDrop(object sender, DragEventArgs e, bool isHeaderDrop)
     {
-        await HandleCategoryDropAsync(sender, e, isHeaderDrop: true);
+        var dropTask = HandleCategoryDropAsync(sender, e, isHeaderDrop);
+        if (dropTask.IsCompleted)
+        {
+            dropTask.GetAwaiter().GetResult();
+            return;
+        }
+
+        // OLE treats Drop as complete when the routed handler returns. Pump the
+        // WPF dispatcher until the asynchronous file move finishes so Explorer
+        // cannot act on a Move effect before the destination has the files.
+        var frame = new DispatcherFrame();
+        _ = dropTask.ContinueWith(
+            _ => Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() => frame.Continue = false)),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+        Dispatcher.PushFrame(frame);
+        dropTask.GetAwaiter().GetResult();
     }
 
     private async Task HandleCategoryDropAsync(object sender, DragEventArgs e, bool isHeaderDrop)
@@ -1670,6 +1750,7 @@ public partial class MainWindow : Window
         e.Handled = true;
         if (category.IsSystem)
         {
+            e.Effects = DragDropEffects.None;
             return;
         }
 
@@ -1730,7 +1811,13 @@ public partial class MainWindow : Window
         {
             if (isHeaderDrop)
             {
-                await _viewModel.AddReferencesAsync(category, paths);
+                var result = await _viewModel.MovePathsIntoCategoryAsync(category, paths);
+                if (result.Failures.Count > 0)
+                {
+                    // Keep any paths that DeskZone could not collect in their
+                    // original location; partial successes already live in the category.
+                    e.Effects = DragDropEffects.Copy;
+                }
             }
             else
             {
@@ -1739,7 +1826,11 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            ShowError(isHeaderDrop ? "添加文件引用失败" : "移动文件失败", ex);
+            if (isHeaderDrop)
+            {
+                e.Effects = DragDropEffects.Copy;
+            }
+            ShowError("移动文件失败", ex);
         }
     }
 
@@ -1836,7 +1927,7 @@ public partial class MainWindow : Window
         {
             try
             {
-                await _viewModel.RemoveDeletedReferenceAsync(item);
+                await _viewModel.RemoveDeletedItemsAsync(new[] { itemPath });
             }
             catch (Exception ex)
             {

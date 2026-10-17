@@ -42,7 +42,7 @@ public sealed class LocalBackend
     public ILayoutService Layout { get; }
     public IFileSystemChangeMonitor FileSystemChanges { get; }
 
-    public static LocalBackend CreateDefault()
+    public static LocalBackend CreateDefault(IShortcutTargetResolver? shortcutTargetResolver = null)
     {
         var paths = new DataPaths();
         var connections = new SqliteConnectionFactory(paths);
@@ -60,7 +60,7 @@ public sealed class LocalBackend
             backup,
             dataTransfer,
             new CategoryService(workspace),
-            new DesktopItemService(workspace, paths.ManagedStorageDirectory),
+            new DesktopItemService(workspace, paths.ManagedStorageDirectory, shortcutTargetResolver),
             new LayoutService(workspace),
             new FileSystemChangeMonitor());
     }

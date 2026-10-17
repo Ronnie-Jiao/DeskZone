@@ -113,21 +113,32 @@
             </Style.Triggers>
         </Style>
         <Style x:Key="CategoryOverflowButton" TargetType="Button" BasedOn="{StaticResource FlatIconButton}">
-            <!-- Fill the complete overflow column so the header's drag cursor
-                 cannot leak into the clickable menu area. -->
+            <!-- The overflow action owns the complete column. Keep its
+                 transparent surface hit-testable so the category header's
+                 drag cursor cannot leak into the clickable menu area. -->
             <Setter Property="Width" Value="30" />
             <Setter Property="Height" Value="36" />
             <Setter Property="HorizontalAlignment" Value="Stretch" />
             <Setter Property="VerticalAlignment" Value="Stretch" />
+            <Setter Property="Background" Value="Transparent" />
             <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Panel.ZIndex" Value="1" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type Button}">
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-                            <Ellipse Width="2.2" Height="2.2" Margin="1" Fill="{TemplateBinding Foreground}" />
-                            <Ellipse Width="2.2" Height="2.2" Margin="1" Fill="{TemplateBinding Foreground}" />
-                            <Ellipse Width="2.2" Height="2.2" Margin="1" Fill="{TemplateBinding Foreground}" />
-                        </StackPanel>
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6">
+                            <StackPanel Orientation="Horizontal"
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center"
+                                        IsHitTestVisible="False">
+                                <Ellipse Width="2.2" Height="2.2" Margin="1" Fill="{TemplateBinding Foreground}" />
+                                <Ellipse Width="2.2" Height="2.2" Margin="1" Fill="{TemplateBinding Foreground}" />
+                                <Ellipse Width="2.2" Height="2.2" Margin="1" Fill="{TemplateBinding Foreground}" />
+                            </StackPanel>
+                        </Border>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -445,7 +456,7 @@
                         <TextBox x:Name="SearchTextBox"
                                  Focusable="True"
                                  IsTabStop="True"
-                                 Padding="10,0"
+                                 Padding="10,0,38,0"
                                  BorderThickness="0"
                                  Background="Transparent"
                                  Foreground="{DynamicResource ActionBrush}"
@@ -463,6 +474,19 @@
                                    Foreground="{DynamicResource CategoryMetaBrush}"
                                    FontSize="11"
                                    Text="搜索文件、文件夹或快捷方式" />
+                        <Button x:Name="SearchClearButton"
+                                Width="28"
+                                Height="28"
+                                Margin="0,0,4,0"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Center"
+                                Style="{StaticResource FlatIconButton}"
+                                Visibility="{Binding HasSearchText, Converter={StaticResource BoolToVisibility}}"
+                                ToolTip="清空搜索"
+                                AutomationProperties.Name="清空搜索"
+                                Click="SearchClearButton_Click">
+                            <TextBlock Text="×" FontFamily="Segoe UI" FontSize="18" />
+                        </Button>
                     </Grid>
                 </Border>
 
@@ -511,10 +535,10 @@
                                                 Padding="6,0"
                                                 AllowDrop="True"
                                                 Tag="{Binding}"
-                                                DragEnter="CategoryHeader_DragEnter"
-                                                DragOver="CategoryHeader_DragOver"
-                                                DragLeave="CategoryHeader_DragLeave"
-                                                Drop="CategoryHeader_Drop">
+                                                PreviewDragEnter="CategoryHeader_DragEnter"
+                                                PreviewDragOver="CategoryHeader_DragOver"
+                                                PreviewDragLeave="CategoryHeader_DragLeave"
+                                                PreviewDrop="CategoryHeader_Drop">
                                             <Border.Style>
                                                 <Style TargetType="Border">
                                                     <Setter Property="CornerRadius" Value="11,11,0,0" />
@@ -561,7 +585,7 @@
                                             <TextBox Grid.Column="1"
                                                      Margin="2,0,6,0"
                                                      Padding="2,0"
-                                                     AllowDrop="False"
+                                                     AllowDrop="True"
                                                      VerticalContentAlignment="Center"
                                                      BorderThickness="0"
                                                      Background="Transparent"
@@ -647,12 +671,9 @@
                                                              DragLeave="FileCard_DragLeave"
                                                              Drop="FileCard_Drop">
                                                         <Border.Width>
-                                                            <MultiBinding Converter="{StaticResource AdaptiveCardWidthConverter}">
-                                                                <Binding RelativeSource="{RelativeSource AncestorType={x:Type ItemsControl}}"
-                                                                         Path="ActualWidth" />
-                                                                <Binding RelativeSource="{RelativeSource AncestorType={x:Type ItemsControl}}"
-                                                                         Path="DataContext.Items.Count" />
-                                                            </MultiBinding>
+                                                            <Binding RelativeSource="{RelativeSource AncestorType={x:Type ItemsControl}}"
+                                                                     Path="ActualWidth"
+                                                                     Converter="{StaticResource AdaptiveCardWidthConverter}" />
                                                         </Border.Width>
                                                         <StackPanel>
                                                             <Grid Width="32"

@@ -7,7 +7,8 @@ public enum OperationType
     RemoveReference,
     ManagedMove,
     RenameFile,
-    DeleteCategory
+    DeleteCategory,
+    ForgetMissingItem
 }
 
 public enum OperationStatus

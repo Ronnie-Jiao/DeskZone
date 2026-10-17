@@ -20,15 +20,20 @@ public sealed class WorkspaceViewModel : BindableBase
 
     private readonly LocalBackend _backend;
     private readonly IShellService _shell;
+    private readonly IShortcutTargetResolver? _shortcutTargetResolver;
     private string _statusMessage = "正在加载本地工作区…";
     private string _searchText = string.Empty;
     private bool _isBusy;
     private WorkspaceDisplayMode _displayMode = WorkspaceDisplayMode.Custom;
 
-    public WorkspaceViewModel(LocalBackend backend, IShellService shell)
+    public WorkspaceViewModel(
+        LocalBackend backend,
+        IShellService shell,
+        IShortcutTargetResolver? shortcutTargetResolver = null)
     {
         _backend = backend;
         _shell = shell;
+        _shortcutTargetResolver = shortcutTargetResolver;
     }
 
     public ObservableCollection<CategoryViewModel> Categories { get; } = new();
@@ -64,10 +69,13 @@ public sealed class WorkspaceViewModel : BindableBase
         {
             if (SetField(ref _searchText, value))
             {
+                RaisePropertyChanged(nameof(HasSearchText));
                 ApplySearchFilter();
             }
         }
     }
+
+    public bool HasSearchText => !string.IsNullOrEmpty(SearchText);
 
     public string StatusMessage
     {
@@ -128,6 +136,20 @@ public sealed class WorkspaceViewModel : BindableBase
         try
         {
             await ReloadAsync(cancellationToken);
+            var stalePaths = Categories
+                .Where(category => !category.IsRecentlyOpened)
+                .SelectMany(category => category.Items)
+                .Where(item => IsPathDefinitelyMissing(item.Path) && IsPathRootAvailable(item.Path))
+                .Select(item => item.Path)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var removed = await RemoveMissingItemsCoreAsync(stalePaths, cancellationToken);
+            removed += await RemoveMissingShortcutTargetsCoreAsync(cancellationToken);
+            if (removed > 0)
+            {
+                await ReloadAsync(cancellationToken);
+            }
+
             StatusMessage = Categories.Count == 0
                 ? "还没有分类。点击“新建分类”开始整理。"
                 : $"已加载 {Categories.Count} 个分类。";
@@ -367,7 +389,21 @@ public sealed class WorkspaceViewModel : BindableBase
         try
         {
             var result = await _backend.Items.AddReferencesAsync(category.Id, paths, cancellationToken);
-            await ReloadCategoryItemsAsync(category, cancellationToken);
+            if (result.Accepted > 0 && !category.IsExpanded)
+            {
+                await _backend.Categories.SetCollapsedAsync(category.Id, false, cancellationToken);
+                category.SetExpanded(true);
+            }
+
+            if (result.MovedFromOtherCategories > 0)
+            {
+                await ReloadAsync(cancellationToken);
+            }
+            else
+            {
+                await ReloadCategoryItemsAsync(category, cancellationToken);
+                UpdateFileSystemWatchPaths();
+            }
             StatusMessage = result.Failures.Count == 0
                 ? $"已接收 {result.Accepted} 个入口（仅建立本地引用，不移动真实文件）。"
                 : $"已接收 {result.Accepted} 个入口，{result.Failures.Count} 个路径未加入。";
@@ -387,6 +423,12 @@ public sealed class WorkspaceViewModel : BindableBase
         try
         {
             var result = await _backend.Items.MovePathsIntoCategoryAsync(category.Id, paths, cancellationToken);
+            if (result.Moved > 0 && !category.IsExpanded)
+            {
+                await _backend.Categories.SetCollapsedAsync(category.Id, false, cancellationToken);
+                category.SetExpanded(true);
+            }
+
             await ReloadAsync(cancellationToken);
             StatusMessage = result.Failures.Count == 0
                 ? $"已移动 {result.Moved} 个项目到“{category.Name}”。"
@@ -577,6 +619,31 @@ public sealed class WorkspaceViewModel : BindableBase
         }
     }
 
+    public async Task<int> RemoveMissingShortcutTargetsAsync(CancellationToken cancellationToken = default)
+    {
+        if (IsBusy)
+        {
+            return 0;
+        }
+
+        IsBusy = true;
+        try
+        {
+            var removed = await RemoveMissingShortcutTargetsCoreAsync(cancellationToken);
+            if (removed > 0)
+            {
+                await ReloadAsync(cancellationToken);
+                StatusMessage = $"已清理 {removed} 个目标已卸载的快捷方式及其最近打开记录。";
+            }
+
+            return removed;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
     public async Task OpenItemAsync(DesktopItemViewModel item, CancellationToken cancellationToken = default)
     {
         if (item.IsMissing)
@@ -611,26 +678,147 @@ public sealed class WorkspaceViewModel : BindableBase
         await _shell.RevealInExplorerAsync(item.Path, cancellationToken);
     }
 
-    public async Task RemoveDeletedReferenceAsync(
-        DesktopItemViewModel item,
+    public async Task<int> RemoveDeletedItemsAsync(
+        IReadOnlyCollection<string> deletedPaths,
         CancellationToken cancellationToken = default)
     {
-        if (item.Model.ItemMode == DesktopItemMode.Managed)
+        if (deletedPaths.Count == 0)
         {
-            await ReloadAsync(cancellationToken);
-            return;
+            return 0;
         }
 
         IsBusy = true;
         try
         {
-            await _backend.Items.RemoveReferencesAsync(new[] { item.Id }, cancellationToken);
-            await ReloadAsync(cancellationToken);
-            StatusMessage = $"已从 DeskZone 移除已删除的“{item.Name}”，其最近打开记录也已清理。";
+            var removed = await RemoveMissingItemsCoreAsync(deletedPaths, cancellationToken);
+            if (removed > 0)
+            {
+                await ReloadAsync(cancellationToken);
+                StatusMessage = $"已清理 {removed} 个已删除项目及其最近打开记录。";
+            }
+
+            return removed;
         }
         finally
         {
             IsBusy = false;
+        }
+    }
+
+    private async Task<int> RemoveMissingItemsCoreAsync(
+        IReadOnlyCollection<string> deletedPaths,
+        CancellationToken cancellationToken)
+    {
+        if (deletedPaths.Count == 0)
+        {
+            return 0;
+        }
+
+        var normalizedDeletedPaths = deletedPaths
+            .Select(NormalizePathForComparison)
+            .Where(path => path is not null)
+            .Cast<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (normalizedDeletedPaths.Length == 0)
+        {
+            return 0;
+        }
+
+        var itemIds = Categories
+            .Where(category => !category.IsRecentlyOpened)
+            .SelectMany(category => category.Items)
+            .Select(item => item.Model)
+            .Where(item => IsPathDefinitelyMissing(item.ActivePath) &&
+                           normalizedDeletedPaths.Any(deletedPath => IsSameOrDescendantPath(item.ActivePath, deletedPath)))
+            .Select(item => item.Id)
+            .Distinct()
+            .ToArray();
+
+        return await _backend.Items.RemoveMissingItemsAsync(itemIds, cancellationToken);
+    }
+
+    private async Task<int> RemoveMissingShortcutTargetsCoreAsync(CancellationToken cancellationToken)
+    {
+        if (_shortcutTargetResolver is null)
+        {
+            return 0;
+        }
+
+        var missingShortcutIds = new List<Guid>();
+        foreach (var item in Categories
+                     .Where(category => !category.IsRecentlyOpened)
+                     .SelectMany(category => category.Items)
+                     .Select(item => item.Model)
+                     .Where(item => item.ItemType == DesktopItemType.Shortcut))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_shortcutTargetResolver.TryResolveTarget(item.ActivePath, out var targetPath) &&
+                IsPathRootAvailable(targetPath) &&
+                IsPathDefinitelyMissing(targetPath))
+            {
+                missingShortcutIds.Add(item.Id);
+            }
+        }
+
+        return await _backend.Items.RemoveMissingItemsAsync(missingShortcutIds, cancellationToken);
+    }
+
+    private static bool IsSameOrDescendantPath(string itemPath, string deletedPath)
+    {
+        var normalizedItemPath = NormalizePathForComparison(itemPath);
+        var normalizedDeletedPath = NormalizePathForComparison(deletedPath);
+        if (normalizedItemPath is null || normalizedDeletedPath is null)
+        {
+            return false;
+        }
+
+        if (string.Equals(normalizedItemPath, normalizedDeletedPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var relativePath = Path.GetRelativePath(normalizedDeletedPath, normalizedItemPath);
+        return relativePath != "." &&
+               !Path.IsPathRooted(relativePath) &&
+               !string.Equals(relativePath, "..", StringComparison.Ordinal) &&
+               !relativePath.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) &&
+               !relativePath.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal);
+    }
+
+    private static bool IsPathDefinitelyMissing(string path)
+    {
+        try
+        {
+            _ = File.GetAttributes(path);
+            return false;
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return true;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsPathRootAvailable(string path)
+    {
+        var normalizedPath = NormalizePathForComparison(path);
+        if (normalizedPath is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            var root = Path.GetPathRoot(normalizedPath);
+            return !string.IsNullOrWhiteSpace(root) && Directory.Exists(root);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
         }
     }
 

@@ -8,18 +8,41 @@
         Topmost="True"
         AllowsTransparency="True"
         Background="Transparent">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+    </Window.Resources>
     <Border Background="#01000000">
-        <TextBox x:Name="SearchInputBox"
-                 Padding="10,0"
-                 BorderThickness="0"
-                 Background="Transparent"
-                 Foreground="White"
-                 CaretBrush="White"
-                 FontSize="11"
-                 VerticalContentAlignment="Center"
-                 Focusable="True"
-                 IsTabStop="True"
-                 Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
-                 KeyDown="SearchInputBox_KeyDown" />
+        <Grid>
+            <TextBox x:Name="SearchInputBox"
+                     Padding="10,0,38,0"
+                     BorderThickness="0"
+                     Background="Transparent"
+                     Foreground="White"
+                     CaretBrush="White"
+                     FontSize="11"
+                     VerticalContentAlignment="Center"
+                     Focusable="True"
+                     IsTabStop="True"
+                     Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                     KeyDown="SearchInputBox_KeyDown" />
+            <Button x:Name="SearchClearButton"
+                    Width="28"
+                    Height="28"
+                    Margin="0,0,4,0"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Center"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    Foreground="{Binding Foreground, ElementName=SearchInputBox}"
+                    FontFamily="Segoe UI"
+                    FontSize="18"
+                    Focusable="False"
+                    Cursor="Hand"
+                    Visibility="{Binding HasSearchText, Converter={StaticResource BoolToVisibility}}"
+                    ToolTip="清空搜索"
+                    AutomationProperties.Name="清空搜索"
+                    Click="SearchClearButton_Click"
+                    Content="×" />
+        </Grid>
     </Border>
 </Window>

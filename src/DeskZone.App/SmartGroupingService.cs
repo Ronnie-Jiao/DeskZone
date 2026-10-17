@@ -1,7 +1,7 @@
 using System.IO;
-using System.Reflection;
-using System.Runtime.InteropServices;
 using DeskZone.Core.Models;
+using DeskZone.Core.Services;
+using DeskZone.Shell;
 
 namespace DeskZone.App;
 
@@ -9,6 +9,8 @@ internal sealed record SmartGroupDefinition(string Key, string Name, int OrderIn
 
 internal static class SmartGroupingService
 {
+    private static readonly IShortcutTargetResolver ShortcutTargetResolver = new WindowsShortcutTargetResolver();
+
     public static IReadOnlyList<SmartGroupDefinition> Definitions { get; } =
         new[]
         {
@@ -89,72 +91,9 @@ internal static class SmartGroupingService
 
     internal static string? TryResolveShortcutTarget(string path)
     {
-        if (!string.Equals(Path.GetExtension(path), ".lnk", StringComparison.OrdinalIgnoreCase))
-        {
-            return null;
-        }
-
-        object? shell = null;
-        object? shortcut = null;
-        try
-        {
-            var shellType = Type.GetTypeFromProgID("WScript.Shell");
-            if (shellType is null)
-            {
-                return null;
-            }
-
-            shell = Activator.CreateInstance(shellType);
-            if (shell is null)
-            {
-                return null;
-            }
-
-            shortcut = shellType.InvokeMember(
-                "CreateShortcut",
-                BindingFlags.InvokeMethod,
-                binder: null,
-                target: shell,
-                args: new object[] { path });
-
-            var target = shortcut?.GetType().InvokeMember(
-                "TargetPath",
-                BindingFlags.GetProperty,
-                binder: null,
-                target: shortcut,
-                args: null) as string;
-
-            if (string.IsNullOrWhiteSpace(target))
-            {
-                return null;
-            }
-
-            try
-            {
-                return Path.GetFullPath(target.Trim());
-            }
-            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-            {
-                return null;
-            }
-        }
-        catch (Exception ex) when (ex is COMException or InvalidOperationException or MissingMethodException)
-        {
-            return null;
-        }
-        finally
-        {
-            ReleaseComObject(shortcut);
-            ReleaseComObject(shell);
-        }
-    }
-
-    private static void ReleaseComObject(object? value)
-    {
-        if (value is not null && Marshal.IsComObject(value))
-        {
-            Marshal.FinalReleaseComObject(value);
-        }
+        return ShortcutTargetResolver.TryResolveTarget(path, out var targetPath)
+            ? targetPath
+            : null;
     }
 
     internal static readonly HashSet<string> ApplicationExtensions = new(StringComparer.OrdinalIgnoreCase)

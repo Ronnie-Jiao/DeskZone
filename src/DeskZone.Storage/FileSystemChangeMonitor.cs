@@ -78,7 +78,7 @@ public sealed class FileSystemChangeMonitor : IFileSystemChangeMonitor
 
         watcher.Changed += OnChanged;
         watcher.Created += OnChanged;
-        watcher.Deleted += OnChanged;
+        watcher.Deleted += OnDeleted;
         watcher.Renamed += OnRenamed;
         watcher.Error += OnError;
         watcher.EnableRaisingEvents = true;
@@ -88,13 +88,16 @@ public sealed class FileSystemChangeMonitor : IFileSystemChangeMonitor
     private void OnChanged(object sender, FileSystemEventArgs e) =>
         Publish(new[] { e.FullPath });
 
+    private void OnDeleted(object sender, FileSystemEventArgs e) =>
+        Publish(new[] { e.FullPath }, new[] { e.FullPath });
+
     private void OnRenamed(object sender, RenamedEventArgs e) =>
         Publish(new[] { e.OldFullPath, e.FullPath });
 
     private void OnError(object sender, ErrorEventArgs e) =>
         Publish(Array.Empty<string>());
 
-    private void Publish(IEnumerable<string> paths)
+    private void Publish(IEnumerable<string> paths, IEnumerable<string>? deletedPaths = null)
     {
         EventHandler<FileSystemChangeEventArgs>? handler;
         lock (_sync)
@@ -113,6 +116,10 @@ public sealed class FileSystemChangeMonitor : IFileSystemChangeMonitor
                 this,
                 new FileSystemChangeEventArgs(
                     paths
+                        .Where(path => !string.IsNullOrWhiteSpace(path))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToArray(),
+                    (deletedPaths ?? Array.Empty<string>())
                         .Where(path => !string.IsNullOrWhiteSpace(path))
                         .Distinct(StringComparer.OrdinalIgnoreCase)
                         .ToArray()));
