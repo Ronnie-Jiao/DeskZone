@@ -15,8 +15,13 @@ public enum WorkspaceDisplayMode
 
 public sealed class WorkspaceViewModel : BindableBase
 {
-    /// <summary>“最近打开”系统分类最多显示的对象数量。</summary>
-    public const int RecentItemsDisplayLimit = 15;
+    /// <summary>“最近打开”系统分类的默认显示数量。</summary>
+    public const int DefaultRecentItemsDisplayLimit = 15;
+
+    public const int MinimumRecentItemsDisplayLimit = 1;
+    public const int MaximumRecentItemsDisplayLimit = 30;
+
+    private const string RecentItemsDisplayLimitSettingKey = "recent-items-display-limit";
 
     private readonly LocalBackend _backend;
     private readonly IShellService _shell;
@@ -25,6 +30,7 @@ public sealed class WorkspaceViewModel : BindableBase
     private string _searchText = string.Empty;
     private bool _isBusy;
     private WorkspaceDisplayMode _displayMode = WorkspaceDisplayMode.Custom;
+    private int _recentItemsDisplayLimit = DefaultRecentItemsDisplayLimit;
 
     public WorkspaceViewModel(
         LocalBackend backend,
@@ -61,6 +67,12 @@ public sealed class WorkspaceViewModel : BindableBase
 
     public bool IsCustomMode => DisplayMode == WorkspaceDisplayMode.Custom;
     public bool IsSmartMode => DisplayMode == WorkspaceDisplayMode.Smart;
+
+    public int RecentItemsDisplayLimit
+    {
+        get => _recentItemsDisplayLimit;
+        private set => SetField(ref _recentItemsDisplayLimit, value);
+    }
 
     public string SearchText
     {
@@ -135,6 +147,14 @@ public sealed class WorkspaceViewModel : BindableBase
         IsBusy = true;
         try
         {
+            var savedRecentItemsDisplayLimit = await _backend.Settings.LoadAsync<int?>(
+                RecentItemsDisplayLimitSettingKey,
+                cancellationToken);
+            if (savedRecentItemsDisplayLimit.HasValue)
+            {
+                RecentItemsDisplayLimit = NormalizeRecentItemsDisplayLimit(savedRecentItemsDisplayLimit.Value);
+            }
+
             await ReloadAsync(cancellationToken);
             var stalePaths = Categories
                 .Where(category => !category.IsRecentlyOpened)
@@ -158,6 +178,36 @@ public sealed class WorkspaceViewModel : BindableBase
         {
             IsBusy = false;
         }
+    }
+
+    public async Task SetRecentItemsDisplayLimitAsync(
+        int displayLimit,
+        CancellationToken cancellationToken = default)
+    {
+        if (displayLimit is < MinimumRecentItemsDisplayLimit or > MaximumRecentItemsDisplayLimit)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(displayLimit),
+                $"最近打开数量必须在 {MinimumRecentItemsDisplayLimit} 到 {MaximumRecentItemsDisplayLimit} 之间。");
+        }
+
+        if (RecentItemsDisplayLimit == displayLimit)
+        {
+            return;
+        }
+
+        await _backend.Settings.SaveAsync(
+            RecentItemsDisplayLimitSettingKey,
+            displayLimit,
+            cancellationToken);
+        RecentItemsDisplayLimit = displayLimit;
+
+        foreach (var category in Categories.Concat(SmartCategories).Where(category => category.IsRecentlyOpened))
+        {
+            category.ReplaceItems(await GetRecentlyOpenedDesktopItemsAsync(category.Id, cancellationToken));
+        }
+
+        ApplySearchFilter();
     }
 
     public async Task<CategoryViewModel> CreateCategoryAsync(CancellationToken cancellationToken = default)
@@ -191,7 +241,7 @@ public sealed class WorkspaceViewModel : BindableBase
         }
     }
 
-    public async Task<CategoryViewModel> CreateCategoryFromFolderAsync(
+    public async Task<(int CandidateCount, MoveItemsResult? MoveResult)> CreateCategoryFromFolderAsync(
         string folderPath,
         CancellationToken cancellationToken = default)
     {
@@ -221,20 +271,20 @@ public sealed class WorkspaceViewModel : BindableBase
             Categories.Add(viewModel);
             ApplySearchFilter();
 
-            AddReferencesResult? result = null;
+            MoveItemsResult? result = null;
             if (childPaths.Length > 0)
             {
-                result = await _backend.Items.AddReferencesAsync(category.Id, childPaths, cancellationToken);
-                await ReloadCategoryItemsAsync(viewModel, cancellationToken);
+                result = await _backend.Items.MovePathsIntoCategoryAsync(category.Id, childPaths, cancellationToken);
+                await ReloadAsync(cancellationToken);
             }
 
             StatusMessage = result is null
                 ? $"已创建分类“{category.Name}”，但文件夹为空。"
                 : result.Failures.Count == 0
-                    ? $"已根据“{category.Name}”创建分类，并加入 {result.Accepted} 个入口。"
-                    : $"已创建分类“{category.Name}”，加入 {result.Accepted} 个入口，{result.Failures.Count} 个项目未加入。";
+                    ? $"已创建分类“{category.Name}”，并将 {result.Moved} 个项目收纳到本地数据目录。"
+                    : $"已创建分类“{category.Name}”，已收纳 {result.Moved} 个项目，{result.Failures.Count} 个项目未移动并保留在源文件夹。";
 
-            return viewModel;
+            return (childPaths.Length, result);
         }
         finally
         {
@@ -434,6 +484,90 @@ public sealed class WorkspaceViewModel : BindableBase
                 ? $"已移动 {result.Moved} 个项目到“{category.Name}”。"
                 : $"已移动 {result.Moved} 个项目到“{category.Name}”，{result.Failures.Count} 个项目未移动。";
             return result;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    public DesktopItemViewModel? FindDuplicateProgramShortcut(CategoryViewModel category, string candidatePath)
+    {
+        if (category.IsSystem ||
+            !string.Equals(Path.GetExtension(candidatePath), ".lnk", StringComparison.OrdinalIgnoreCase) ||
+            !File.Exists(candidatePath))
+        {
+            return null;
+        }
+
+        var normalizedCandidatePath = NormalizePathForComparison(candidatePath);
+        var candidateName = Path.GetFileName(candidatePath);
+        var candidateTarget = _shortcutTargetResolver is not null &&
+                              _shortcutTargetResolver.TryResolveTarget(candidatePath, out var resolvedCandidateTarget)
+            ? NormalizePathForComparison(resolvedCandidateTarget)
+            : null;
+
+        foreach (var item in category.Items)
+        {
+            if (item.Model.ItemType != DesktopItemType.Shortcut)
+            {
+                continue;
+            }
+
+            var existingPath = NormalizePathForComparison(item.Path);
+            if (normalizedCandidatePath is not null &&
+                existingPath is not null &&
+                string.Equals(normalizedCandidatePath, existingPath, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (string.Equals(Path.GetFileName(item.Path), candidateName, StringComparison.OrdinalIgnoreCase))
+            {
+                return item;
+            }
+
+            if (candidateTarget is null ||
+                _shortcutTargetResolver is null ||
+                !_shortcutTargetResolver.TryResolveTarget(item.Path, out var existingTarget))
+            {
+                continue;
+            }
+
+            var normalizedExistingTarget = NormalizePathForComparison(existingTarget);
+            if (normalizedExistingTarget is not null &&
+                string.Equals(candidateTarget, normalizedExistingTarget, StringComparison.OrdinalIgnoreCase))
+            {
+                return item;
+            }
+        }
+
+        return null;
+    }
+
+    public async Task<bool> ReplaceProgramShortcutAsync(
+        CategoryViewModel category,
+        DesktopItemViewModel existingItem,
+        string incomingPath,
+        CancellationToken cancellationToken = default)
+    {
+        if (category.IsSystem)
+        {
+            throw new InvalidOperationException("系统分类中的程序入口不能被替换。");
+        }
+
+        IsBusy = true;
+        try
+        {
+            var sourceRemoved = await _backend.Items.ReplaceShortcutWithPathAsync(
+                existingItem.Id,
+                incomingPath,
+                cancellationToken);
+            await ReloadAsync(cancellationToken);
+            StatusMessage = sourceRemoved
+                ? $"已替换“{existingItem.PersistedName}”。"
+                : $"已替换“{existingItem.PersistedName}”，原快捷方式仍保留在原位置。";
+            return sourceRemoved;
         }
         finally
         {
@@ -951,7 +1085,7 @@ public sealed class WorkspaceViewModel : BindableBase
         Guid categoryId,
         CancellationToken cancellationToken)
     {
-        var recentItems = await _backend.Items.ListRecentlyOpenedAsync(RecentItemsDisplayLimit, cancellationToken);
+        var recentItems = await _backend.Items.ListRecentlyOpenedAsync(_recentItemsDisplayLimit, cancellationToken);
         return recentItems
             .Select((item, index) => new DesktopItem(
                 item.ItemId,
@@ -966,6 +1100,14 @@ public sealed class WorkspaceViewModel : BindableBase
                 item.OpenedAt,
                 item.OpenedAt))
             .ToArray();
+    }
+
+    private static int NormalizeRecentItemsDisplayLimit(int displayLimit)
+    {
+        return Math.Clamp(
+            displayLimit,
+            MinimumRecentItemsDisplayLimit,
+            MaximumRecentItemsDisplayLimit);
     }
 
     private static int GetRecentOrder(

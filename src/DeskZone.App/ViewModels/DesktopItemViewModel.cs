@@ -6,6 +6,7 @@ namespace DeskZone.App.ViewModels;
 public sealed class DesktopItemViewModel : BindableBase
 {
     private DesktopItem _model;
+    private bool _isSelected;
 
     public DesktopItemViewModel(DesktopItem model, bool isRecentItem = false, bool canReorder = true)
     {
@@ -23,7 +24,14 @@ public sealed class DesktopItemViewModel : BindableBase
     public bool IsMissing => Model.IsMissing;
     public bool IsRecentItem { get; }
     public bool CanReorder { get; }
+    public bool IsSelected
+    {
+        get => _isSelected;
+        private set => SetField(ref _isSelected, value);
+    }
     public ImageSource? IconImage { get; private set; }
+
+    public void SetSelected(bool isSelected) => IsSelected = isSelected;
 
     public void Apply(DesktopItem model)
     {

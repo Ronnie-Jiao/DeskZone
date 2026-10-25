@@ -10,6 +10,7 @@ public interface IDesktopItemService
     Task<DesktopItem> RenameDisplayNameAsync(DesktopItem item, string displayName, CancellationToken cancellationToken = default);
     Task<AddReferencesResult> AddReferencesAsync(Guid categoryId, IEnumerable<string> paths, CancellationToken cancellationToken = default);
     Task<MoveItemsResult> MovePathsIntoCategoryAsync(Guid categoryId, IEnumerable<string> paths, CancellationToken cancellationToken = default);
+    Task<bool> ReplaceShortcutWithPathAsync(Guid existingItemId, string incomingPath, CancellationToken cancellationToken = default);
     Task MoveItemToDirectoryAsync(Guid itemId, string destinationDirectory, CancellationToken cancellationToken = default);
     Task MoveToCategoryAsync(IReadOnlyCollection<Guid> itemIds, Guid targetCategoryId, CancellationToken cancellationToken = default);
     Task ReorderAsync(Guid categoryId, IReadOnlyList<Guid> orderedItemIds, CancellationToken cancellationToken = default);

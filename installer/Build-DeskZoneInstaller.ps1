@@ -18,7 +18,6 @@ $installScript = Join-Path $installerRoot 'Install-DeskZone.ps1'
 $installCommand = Join-Path $installerRoot 'Install-DeskZone.cmd'
 $iconAsset = Join-Path $repoRoot 'src\DeskZone.App\Assets\DeskZoneLogo.ico'
 $iconUpdaterScript = Join-Path $installerRoot 'Set-DeskZoneInstallerIcon.ps1'
-$backgroundAsset = Join-Path $installerRoot 'assets\InstallerBackground.png'
 $logoAsset = Join-Path $installerRoot 'assets\DeskZoneLogoCompact.png'
 $folderIconAsset = Join-Path $installerRoot 'assets\InstallerFolderIcon.png'
 
@@ -47,7 +46,7 @@ if (-not (Test-Path -LiteralPath $installCommand -PathType Leaf)) {
 if (-not (Test-Path -LiteralPath $iconUpdaterScript -PathType Leaf)) {
     throw "找不到安装包图标处理脚本：$iconUpdaterScript"
 }
-foreach ($asset in @($iconAsset, $backgroundAsset, $logoAsset, $folderIconAsset)) {
+foreach ($asset in @($iconAsset, $logoAsset, $folderIconAsset)) {
     if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) {
         throw "找不到安装器界面资源：$asset"
     }
@@ -74,7 +73,6 @@ try {
     Copy-Item -LiteralPath $iconAsset -Destination (Join-Path $stagePath 'DeskZoneLogo.ico') -Force
     # IExpress 会把 SED 中的嵌套目录展开到解压根目录；资源放在根目录，
     # 避免安装包运行时找不到安装器背景和图标。
-    Copy-Item -LiteralPath $backgroundAsset -Destination (Join-Path $stagePath 'InstallerBackground.png') -Force
     Copy-Item -LiteralPath $logoAsset -Destination (Join-Path $stagePath 'DeskZoneLogoCompact.png') -Force
     Copy-Item -LiteralPath $folderIconAsset -Destination (Join-Path $stagePath 'InstallerFolderIcon.png') -Force
     Get-ChildItem -LiteralPath $OutputPath -Force -File | Copy-Item -Destination $stagePath -Force

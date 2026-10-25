@@ -326,6 +326,193 @@ public sealed class DesktopItemService : IDesktopItemService
         return new MoveItemsResult(moved, failures);
     }
 
+    public async Task<bool> ReplaceShortcutWithPathAsync(
+        Guid existingItemId,
+        string incomingPath,
+        CancellationToken cancellationToken = default)
+    {
+        var existing = await _store.GetItemAsync(existingItemId, cancellationToken)
+            ?? throw new DeskZoneValidationException("要替换的程序入口不存在或已被移除。");
+        _ = await RequireCategoryAsync(existing.CategoryId, cancellationToken);
+
+        if (existing.ItemType != DesktopItemType.Shortcut)
+        {
+            throw new DeskZoneValidationException("只能替换已有的程序快捷方式。");
+        }
+
+        var fullPath = NormalizePath(incomingPath);
+        if (GetItemType(fullPath) != DesktopItemType.Shortcut)
+        {
+            throw new DeskZoneValidationException("要替换的程序快捷方式不存在或格式无效。");
+        }
+
+        if (PathsEqual(existing.ActivePath, fullPath))
+        {
+            throw new DeskZoneValidationException("该快捷方式已经位于当前入口中，无需替换。");
+        }
+
+        if (IsInsideDirectory(fullPath, _managedStorageDirectory))
+        {
+            throw new DeskZoneValidationException("不能将 DeskZone 收纳目录中的快捷方式再次作为替换来源。");
+        }
+
+        var targetDirectory = Path.Combine(_managedStorageDirectory, existing.CategoryId.ToString("N"));
+        Directory.CreateDirectory(targetDirectory);
+
+        var targetPath = existing.ItemMode == DesktopItemMode.Managed
+            ? NormalizePath(existing.ActivePath)
+            : GetUniqueDestinationPath(targetDirectory, GetDisplayName(fullPath), isDirectory: false);
+        if (!IsInsideDirectory(targetPath, targetDirectory))
+        {
+            throw new DeskZoneValidationException("现有程序入口的收纳路径无效，无法安全替换。");
+        }
+        if (Directory.Exists(targetPath))
+        {
+            throw new DeskZoneValidationException("替换目标被同名文件夹占用，无法安全替换程序快捷方式。");
+        }
+
+        var stagedPath = Path.Combine(targetDirectory, $".deskzone-replace-{Guid.NewGuid():N}.tmp");
+        var backupPath = Path.Combine(targetDirectory, $".deskzone-backup-{Guid.NewGuid():N}.tmp");
+        var existingBackedUp = false;
+        var replacementInstalled = false;
+
+        try
+        {
+            File.Copy(fullPath, stagedPath, overwrite: false);
+
+            if (PathExists(targetPath))
+            {
+                MovePath(targetPath, backupPath);
+                existingBackedUp = true;
+            }
+
+            MovePath(stagedPath, targetPath);
+            replacementInstalled = true;
+
+            var updated = existing with
+            {
+                ItemMode = DesktopItemMode.Managed,
+                OriginalPath = fullPath,
+                ManagedPath = targetPath,
+                DisplayName = GetDisplayName(fullPath),
+                ItemType = DesktopItemType.Shortcut,
+                IsMissing = false,
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
+
+            await _store.UpdateItemAsync(updated, cancellationToken);
+
+            try
+            {
+                var incomingReference = await _store.FindItemByOriginalPathAsync(
+                    fullPath,
+                    DesktopItemMode.Reference,
+                    cancellationToken);
+                if (incomingReference is not null && incomingReference.Id != existing.Id)
+                {
+                    await _store.RemoveItemsAsync(new[] { incomingReference.Id }, cancellationToken);
+                }
+            }
+            catch
+            {
+                // The normal missing-item cleanup can remove a stale reference if this cleanup fails.
+            }
+
+            try
+            {
+                var recentItems = await _store.GetRecentlyOpenedItemsAsync(500, cancellationToken);
+                var recentItem = recentItems.FirstOrDefault(item => item.ItemId == existing.Id);
+                if (recentItem is not null)
+                {
+                    await _store.RecordRecentlyOpenedItemAsync(
+                        recentItem with
+                        {
+                            Path = updated.ActivePath,
+                            DisplayName = updated.DisplayName,
+                            ItemType = updated.ItemType
+                        },
+                        cancellationToken);
+                }
+            }
+            catch
+            {
+                // A recent-item refresh must not undo a completed replacement.
+            }
+
+            try
+            {
+                if (existingBackedUp && File.Exists(backupPath))
+                {
+                    File.Delete(backupPath);
+                }
+            }
+            catch
+            {
+                // Keep the backup if cleanup is temporarily unavailable.
+            }
+
+            try
+            {
+                await LogAsync(
+                    OperationType.ManagedMove,
+                    fullPath,
+                    targetPath,
+                    new { existingItemId, categoryId = existing.CategoryId, replacedShortcut = true },
+                    canUndo: false,
+                    cancellationToken);
+            }
+            catch
+            {
+                // The shortcut and database are already consistent; logging must not undo the replacement.
+            }
+
+            try
+            {
+                File.Delete(fullPath);
+                return !File.Exists(fullPath);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+        catch
+        {
+            if (replacementInstalled && File.Exists(targetPath))
+            {
+                try
+                {
+                    File.Delete(targetPath);
+                }
+                catch
+                {
+                    // The database update failed; preserve the backup for recovery if rollback is blocked.
+                }
+            }
+
+            if (existingBackedUp && File.Exists(backupPath) && !File.Exists(targetPath))
+            {
+                TryMovePath(backupPath, targetPath);
+            }
+
+            throw;
+        }
+        finally
+        {
+            if (File.Exists(stagedPath))
+            {
+                try
+                {
+                    File.Delete(stagedPath);
+                }
+                catch
+                {
+                    // Staging cleanup is best-effort and does not change the item's state.
+                }
+            }
+        }
+    }
+
     public async Task MoveItemToDirectoryAsync(
         Guid itemId,
         string destinationDirectory,

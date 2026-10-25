@@ -601,12 +601,50 @@
                                                      LostKeyboardFocus="CategoryName_LostKeyboardFocus"
                                                      KeyDown="CategoryName_KeyDown" />
 
-                                            <TextBlock Grid.Column="2"
-                                                       HorizontalAlignment="Center"
-                                                       VerticalAlignment="Center"
-                                                       Foreground="{DynamicResource CategoryMetaBrush}"
-                                                       FontSize="11"
-                                                       Text="{Binding VisibleItemCount}" />
+                                            <Grid Grid.Column="2">
+                                                <TextBlock HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource CategoryMetaBrush}"
+                                                           FontSize="11"
+                                                           Text="{Binding VisibleItemCount}">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsRecentlyOpened}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+
+                                                <TextBox HorizontalContentAlignment="Center"
+                                                         VerticalContentAlignment="Center"
+                                                         Padding="0"
+                                                         BorderThickness="0"
+                                                         Background="Transparent"
+                                                         Foreground="{DynamicResource CategoryMetaBrush}"
+                                                         CaretBrush="{DynamicResource ActionBrush}"
+                                                         FontSize="11"
+                                                         IsReadOnly="True"
+                                                         Cursor="Arrow"
+                                                         Uid="RecentItemsDisplayLimit"
+                                                         ToolTip="双击修改显示数量（1–30）"
+                                                         Text="{Binding DataContext.RecentItemsDisplayLimit,
+                                                                       RelativeSource={RelativeSource AncestorType={x:Type Window}},
+                                                                       Mode=OneWay}">
+                                                    <TextBox.Style>
+                                                        <Style TargetType="TextBox">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsRecentlyOpened}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBox.Style>
+                                                </TextBox>
+                                            </Grid>
 
                                             <Button Grid.Column="3"
                                                     ToolTip="分类选项"
@@ -656,9 +694,6 @@
                                                             Margin="3"
                                                             Padding="5"
                                                             CornerRadius="0"
-                                                            Background="{DynamicResource FileItemSurfaceBrush}"
-                                                            BorderBrush="{DynamicResource FileItemBorderBrush}"
-                                                            BorderThickness="{DynamicResource FileItemBorderThickness}"
                                                              Cursor="Hand"
                                                              ToolTip="{Binding Path}"
                                                              Tag="{Binding}"
@@ -670,6 +705,20 @@
                                                              DragOver="FileCard_DragOver"
                                                              DragLeave="FileCard_DragLeave"
                                                              Drop="FileCard_Drop">
+                                                        <Border.Style>
+                                                            <Style TargetType="Border">
+                                                                <Setter Property="Background" Value="{DynamicResource FileItemSurfaceBrush}" />
+                                                                <Setter Property="BorderBrush" Value="{DynamicResource FileItemBorderBrush}" />
+                                                                <Setter Property="BorderThickness" Value="{DynamicResource FileItemBorderThickness}" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                                        <Setter Property="Background" Value="#331678FF" />
+                                                                        <Setter Property="BorderBrush" Value="{DynamicResource ActionBrush}" />
+                                                                        <Setter Property="BorderThickness" Value="1.5" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Border.Style>
                                                         <Border.Width>
                                                             <Binding RelativeSource="{RelativeSource AncestorType={x:Type ItemsControl}}"
                                                                      Path="ActualWidth"
@@ -905,7 +954,15 @@
                                             Foreground="{StaticResource BrandBrush}"
                                             Cursor="Hand"
                                             Content="导出"
-                                            Click="SettingsExportData_Click" />
+                                            Click="SettingsExportCategories_Click" />
+                                    <Button Padding="9,5"
+                                            Margin="8,0,0,0"
+                                            Background="{DynamicResource SettingsActionSurfaceBrush}"
+                                            BorderBrush="{DynamicResource SettingsActionBorderBrush}"
+                                            Foreground="{StaticResource BrandBrush}"
+                                            Cursor="Hand"
+                                            Content="备份"
+                                            Click="SettingsBackupData_Click" />
                                 </StackPanel>
                                 <Button Padding="10,7"
                                         HorizontalAlignment="Left"

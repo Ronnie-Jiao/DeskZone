@@ -40,10 +40,10 @@ powershell -ExecutionPolicy Bypass -File .\installer\Install-DeskZone.ps1 -Actio
 
 也可以双击 `Install-DeskZone.cmd`，它会打开安装向导。首次安装完成后默认启用开机自动启动，并自动创建桌面和开始菜单快捷方式；升级安装会保留用户原来的开机启动选择，并更新已有快捷方式，不会重复创建桌面入口。若桌面上已有多个指向 DeskZone 正式程序的快捷方式，更新时会保留一个并清理重复入口；带 `--preview` 参数的预览快捷方式不会被修改。
 
-默认程序目录为：
+新用户首次安装时的默认程序目录为：
 
 ```text
-%LOCALAPPDATA%\Programs\DeskZone
+D:\DeskZone
 ```
 
 默认用户数据目录为：
@@ -52,8 +52,10 @@ powershell -ExecutionPolicy Bypass -File .\installer\Install-DeskZone.ps1 -Actio
 %LOCALAPPDATA%\DeskZone
 ```
 
-两个目录严格分离。升级安装前，脚本会关闭旧进程、创建升级前数据备份、以临时目录完成程序文件替换，并在替换失败时恢复旧程序目录。
+两个目录严格分离。已有安装会继续使用用户数据中记录的原安装目录；只有没有历史安装位置的新用户才默认使用 `D:\DeskZone`。升级安装前，脚本会关闭旧进程、创建升级前数据备份、以临时目录完成程序文件替换，并在替换失败时恢复旧程序目录。
 安装向导允许选择程序目录，显示安装进度，结束后可直接打开 DeskZone；首次安装会创建快捷方式，升级时会更新已有快捷方式而不会重复创建。选择过的安装目录会记录在用户数据目录中，后续升级默认仍使用同一目录。
+
+安装向导采用精简的目录选择和进度页面。安装后会在 Windows“设置 → 应用 → 已安装的应用”注册 DeskZone；选择“卸载”会打开确认页，普通卸载仅移除程序和快捷方式，分类、设置及备份保留在 `%LOCALAPPDATA%\DeskZone`。
 
 ## 不可违反的安装器规则
 

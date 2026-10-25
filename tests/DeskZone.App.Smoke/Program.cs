@@ -433,6 +433,7 @@ internal static class Program
     {
         public Task OpenAsync(string path, CancellationToken token = default) => Task.CompletedTask;
         public Task RevealInExplorerAsync(string path, CancellationToken token = default) => Task.CompletedTask;
+        public Task<bool> DeleteToRecycleBinAsync(string path, IntPtr ownerWindowHandle, CancellationToken token = default) => Task.FromResult(false);
         public bool ShowContextMenu(string path, IntPtr handle, int x, int y) => false;
     }
 }

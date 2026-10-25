@@ -141,6 +141,8 @@ public partial class MainWindow : Window
     private HwndSource? _windowSource;
     private SearchInputWindow? _searchInputWindow;
     private ItemNameInputWindow? _itemNameInputWindow;
+    private ItemNameInputWindow? _recentItemsDisplayLimitInputWindow;
+    private TextBox? _editingRecentItemsDisplayLimitTextBox;
 
     private bool _applyingLayout;
     private bool _allowClose;
@@ -166,6 +168,7 @@ public partial class MainWindow : Window
     private Point _categoryDragStartPoint;
     private CategoryViewModel? _pendingCategoryToggle;
     private bool _categoryShiftClick;
+    private DesktopItemViewModel? _selectedItem;
     private DateTimeOffset _panelCreatedAt = DateTimeOffset.UtcNow;
 
     public MainWindow(
@@ -186,6 +189,10 @@ public partial class MainWindow : Window
         AddHandler(
             UIElement.PreviewMouseLeftButtonDownEvent,
             new MouseButtonEventHandler(MainWindow_PreviewMouseLeftButtonDown),
+            handledEventsToo: true);
+        AddHandler(
+            UIElement.PreviewKeyDownEvent,
+            new System.Windows.Input.KeyEventHandler(MainWindow_PreviewKeyDown),
             handledEventsToo: true);
 
         _backend = backend;
@@ -242,6 +249,9 @@ public partial class MainWindow : Window
             _searchInputWindow = null;
             _itemNameInputWindow?.CloseSilently();
             _itemNameInputWindow = null;
+            _recentItemsDisplayLimitInputWindow?.CloseSilently();
+            _recentItemsDisplayLimitInputWindow = null;
+            _editingRecentItemsDisplayLimitTextBox = null;
             _fileSystemRefreshTimer.Stop();
             _shortcutCleanupTimer.Stop();
             _backend.FileSystemChanges.Changed -= FileSystemChanges_Changed;
@@ -265,6 +275,7 @@ public partial class MainWindow : Window
         Topmost = false;
         ShowInTaskbar = false;
         var attached = _desktopHost.TryAttach(handle);
+        ShowInTaskbar = !attached;
         if (!attached)
         {
             _ = SetWindowPos(
@@ -971,7 +982,7 @@ public partial class MainWindow : Window
         ResetNewCategoryDropVisual();
     }
 
-    private async void NewCategory_Drop(object sender, DragEventArgs e)
+    private void NewCategory_Drop(object sender, DragEventArgs e)
     {
         ResetNewCategoryDropVisual();
 
@@ -986,9 +997,47 @@ public partial class MainWindow : Window
             return;
         }
 
+        CompleteNewCategoryDrop(e, folderPath);
+    }
+
+    private void CompleteNewCategoryDrop(DragEventArgs e, string folderPath)
+    {
+        var dropTask = HandleNewCategoryDropAsync(e, folderPath);
+        if (dropTask.IsCompleted)
+        {
+            dropTask.GetAwaiter().GetResult();
+            return;
+        }
+
+        // Keep the Explorer drop operation open until DeskZone has finished
+        // moving the folder contents into managed storage.
+        var frame = new DispatcherFrame();
+        _ = dropTask.ContinueWith(
+            _ => Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() => frame.Continue = false)),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+        Dispatcher.PushFrame(frame);
+        dropTask.GetAwaiter().GetResult();
+    }
+
+    private async Task HandleNewCategoryDropAsync(DragEventArgs e, string folderPath)
+    {
+        e.Handled = true;
+        // Preserve the source folder if the import is empty, partial, or fails.
+        e.Effects = DragDropEffects.Copy;
         try
         {
-            await _viewModel.CreateCategoryFromFolderAsync(folderPath);
+            var importResult = await _viewModel.CreateCategoryFromFolderAsync(folderPath);
+            var allItemsMoved = importResult.CandidateCount > 0 &&
+                                importResult.MoveResult is { } moveResult &&
+                                moveResult.Failures.Count == 0 &&
+                                moveResult.Moved == importResult.CandidateCount;
+            if (allItemsMoved)
+            {
+                e.Effects = DragDropEffects.Move;
+            }
+
             CategoryScroll.ScrollToEnd();
         }
         catch (Exception ex)
@@ -1038,6 +1087,20 @@ public partial class MainWindow : Window
 
         var source = e.OriginalSource as DependencyObject;
         var textBox = FindAncestor<TextBox>(source);
+        if (IsRecentItemsDisplayLimitTextBox(textBox))
+        {
+            _categoryDragCandidate = null;
+            _categoryShiftClick = false;
+            CancelPendingCategoryToggle();
+            if (e.ClickCount >= 2)
+            {
+                BeginRecentItemsDisplayLimitEdit(textBox!);
+            }
+
+            e.Handled = true;
+            return;
+        }
+
         if (FindAncestor<Button>(source) is not null || textBox is not null && !textBox.IsReadOnly)
         {
             return;
@@ -1050,6 +1113,15 @@ public partial class MainWindow : Window
 
     private async void CategoryHeader_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
+        var source = e.OriginalSource as DependencyObject;
+        if (IsRecentItemsDisplayLimitTextBox(FindAncestor<TextBox>(source)))
+        {
+            _categoryDragCandidate = null;
+            _categoryShiftClick = false;
+            e.Handled = true;
+            return;
+        }
+
         var shiftClick = _categoryShiftClick || IsShiftPressed();
         _categoryShiftClick = false;
         var category = _categoryDragCandidate;
@@ -1060,7 +1132,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        var source = e.OriginalSource as DependencyObject;
         var textBox = FindAncestor<TextBox>(source);
         if (FindAncestor<Button>(source) is not null || textBox is not null && !textBox.IsReadOnly)
         {
@@ -1127,6 +1198,80 @@ public partial class MainWindow : Window
         }
 
         e.Handled = true;
+    }
+
+    private static bool IsRecentItemsDisplayLimitTextBox(TextBox? textBox)
+    {
+        return textBox?.Uid == "RecentItemsDisplayLimit";
+    }
+
+    private void BeginRecentItemsDisplayLimitEdit(TextBox textBox)
+    {
+        CancelPendingCategoryToggle();
+        _categoryDragCandidate = null;
+        _categoryShiftClick = false;
+        _editingRecentItemsDisplayLimitTextBox = textBox;
+
+        if (_recentItemsDisplayLimitInputWindow is null)
+        {
+            _recentItemsDisplayLimitInputWindow = new ItemNameInputWindow { Owner = this };
+            _recentItemsDisplayLimitInputWindow.CommitRequested += (_, _) =>
+                _ = CompleteRecentItemsDisplayLimitEditAsync();
+            _recentItemsDisplayLimitInputWindow.CancelRequested += (_, _) =>
+                _ = CompleteRecentItemsDisplayLimitEditAsync(cancel: true);
+        }
+
+        var inputWindow = _recentItemsDisplayLimitInputWindow;
+        PositionItemNameInputWindow(inputWindow, textBox);
+        inputWindow.InputBox.FontSize = textBox.FontSize;
+        inputWindow.InputBox.TextWrapping = TextWrapping.NoWrap;
+        inputWindow.InputBox.Foreground = (Brush)FindResource("ContentPrimaryBrush");
+        inputWindow.InputBox.CaretBrush = (Brush)FindResource("ActionBrush");
+        inputWindow.InputBorder.BorderBrush = (Brush)FindResource("ActionBrush");
+        inputWindow.InputBorder.Background = (Brush)FindResource("FileItemSurfaceBrush");
+        inputWindow.InputBox.Text = _viewModel.RecentItemsDisplayLimit.ToString();
+        inputWindow.InputBox.ToolTip = "1–30；Enter 保存，Esc 取消";
+        textBox.Visibility = Visibility.Hidden;
+
+        if (!inputWindow.IsVisible)
+        {
+            inputWindow.Show();
+        }
+
+        _ = SetForegroundWindow(new WindowInteropHelper(inputWindow).Handle);
+        _ = inputWindow.Activate();
+        inputWindow.InputBox.Focus();
+        Keyboard.Focus(inputWindow.InputBox);
+        inputWindow.InputBox.SelectAll();
+    }
+
+    private async Task CompleteRecentItemsDisplayLimitEditAsync(bool cancel = false)
+    {
+        if (_editingRecentItemsDisplayLimitTextBox is not { } textBox)
+        {
+            return;
+        }
+
+        var text = _recentItemsDisplayLimitInputWindow?.InputBox.Text;
+        _editingRecentItemsDisplayLimitTextBox = null;
+        _recentItemsDisplayLimitInputWindow?.HideSilently();
+        textBox.Visibility = Visibility.Visible;
+
+        if (cancel || !int.TryParse(text, out var displayLimit) ||
+            displayLimit is < WorkspaceViewModel.MinimumRecentItemsDisplayLimit or > WorkspaceViewModel.MaximumRecentItemsDisplayLimit)
+        {
+            return;
+        }
+
+        try
+        {
+            await _viewModel.SetRecentItemsDisplayLimitAsync(displayLimit);
+        }
+        catch (Exception ex)
+        {
+            textBox.GetBindingExpression(System.Windows.Controls.TextBox.TextProperty)?.UpdateTarget();
+            ShowError("更新最近打开数量失败", ex);
+        }
     }
 
     private void CategoryName_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -1240,6 +1385,16 @@ public partial class MainWindow : Window
 
     private void MainWindow_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        var card = FindAncestor<Border>(e.OriginalSource as DependencyObject);
+        if (card?.Tag is DesktopItemViewModel clickedItem)
+        {
+            SetSelectedItem(clickedItem);
+        }
+        else
+        {
+            SetSelectedItem(null);
+        }
+
         var textBox = FindAncestor<TextBox>(e.OriginalSource as DependencyObject);
         if (_editingItemNameTextBox is { } editingTextBox && !ReferenceEquals(editingTextBox, textBox))
         {
@@ -1258,6 +1413,92 @@ public partial class MainWindow : Window
 
         BeginItemNameEdit(textBox);
         e.Handled = true;
+    }
+
+    private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        var focusedTextBox = FindAncestor<TextBox>(Keyboard.FocusedElement as DependencyObject);
+        if (focusedTextBox is { IsReadOnly: false })
+        {
+            return;
+        }
+
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        var controlPressed = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
+        if (controlPressed && (key is Key.C or Key.X) && _selectedItem is { IsMissing: false } item)
+        {
+            e.Handled = true;
+            try
+            {
+                SetWindowsFileClipboard(item.Path, cut: key == Key.X);
+            }
+            catch (Exception ex)
+            {
+                ShowError(key == Key.X ? "剪切项目失败" : "复制项目失败", ex);
+            }
+
+            return;
+        }
+
+        if (!controlPressed && key == Key.Delete && _selectedItem is { } selectedItem)
+        {
+            e.Handled = true;
+            _ = DeleteSelectedItemAsync(selectedItem);
+        }
+    }
+
+    private static void SetWindowsFileClipboard(string path, bool cut)
+    {
+        if (!IsFileSystemPathPresent(path))
+        {
+            throw new FileNotFoundException("项目已不存在，无法复制或剪切。", path);
+        }
+
+        var data = new DataObject();
+        data.SetData(DataFormats.FileDrop, new[] { Path.GetFullPath(path) }, autoConvert: false);
+        data.SetData(
+            "Preferred DropEffect",
+            new MemoryStream(BitConverter.GetBytes((int)(cut ? DragDropEffects.Move : DragDropEffects.Copy))),
+            autoConvert: false);
+        System.Windows.Clipboard.SetDataObject(data, copy: true);
+    }
+
+    private void SetSelectedItem(DesktopItemViewModel? item)
+    {
+        if (ReferenceEquals(_selectedItem, item))
+        {
+            return;
+        }
+
+        _selectedItem?.SetSelected(false);
+        _selectedItem = item;
+        _selectedItem?.SetSelected(true);
+    }
+
+    private async Task DeleteSelectedItemAsync(DesktopItemViewModel item)
+    {
+        var itemPath = item.Path;
+        try
+        {
+            if (IsFileSystemPathPresent(itemPath))
+            {
+                var deleted = await _shell.DeleteToRecycleBinAsync(itemPath, new WindowInteropHelper(this).Handle);
+                if (!deleted && IsFileSystemPathPresent(itemPath))
+                {
+                    return;
+                }
+            }
+
+            await _viewModel.RemoveDeletedItemsAsync(new[] { itemPath });
+            if (!IsFileSystemPathPresent(itemPath))
+            {
+                SetSelectedItem(null);
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowError("移入回收站失败", ex);
+        }
     }
 
     private void BeginItemNameEdit(TextBox textBox)
@@ -1809,29 +2050,124 @@ public partial class MainWindow : Window
 
         try
         {
-            if (isHeaderDrop)
-            {
-                var result = await _viewModel.MovePathsIntoCategoryAsync(category, paths);
-                if (result.Failures.Count > 0)
-                {
-                    // Keep any paths that DeskZone could not collect in their
-                    // original location; partial successes already live in the category.
-                    e.Effects = DragDropEffects.Copy;
-                }
-            }
-            else
-            {
-                await _viewModel.MovePathsIntoCategoryAsync(category, paths);
-            }
+            var preserveOriginals = await MoveDroppedPathsWithDuplicatePromptAsync(category, paths);
+            e.Effects = preserveOriginals ? DragDropEffects.Copy : DragDropEffects.Move;
         }
         catch (Exception ex)
         {
-            if (isHeaderDrop)
-            {
-                e.Effects = DragDropEffects.Copy;
-            }
+            e.Effects = DragDropEffects.Copy;
             ShowError("移动文件失败", ex);
         }
+    }
+
+    private async Task<bool> MoveDroppedPathsWithDuplicatePromptAsync(
+        CategoryViewModel category,
+        IEnumerable<string> paths)
+    {
+        var uniquePaths = paths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var replacements = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var path in uniquePaths)
+        {
+            var duplicate = _viewModel.FindDuplicateProgramShortcut(category, path);
+            if (duplicate is null)
+            {
+                continue;
+            }
+
+            if (!ConfirmReplaceProgramShortcut(Path.GetFileName(path)))
+            {
+                return true;
+            }
+
+            replacements[path] = duplicate.Id;
+        }
+
+        var preserveOriginals = false;
+        foreach (var path in uniquePaths)
+        {
+            if (replacements.TryGetValue(path, out var existingItemId))
+            {
+                var existingItem = category.Items.FirstOrDefault(item => item.Id == existingItemId);
+                if (existingItem is null)
+                {
+                    preserveOriginals = true;
+                    continue;
+                }
+
+                if (!await _viewModel.ReplaceProgramShortcutAsync(category, existingItem, path))
+                {
+                    preserveOriginals = true;
+                }
+
+                continue;
+            }
+
+            var result = await _viewModel.MovePathsIntoCategoryAsync(category, new[] { path });
+            if (result.Failures.Count > 0)
+            {
+                preserveOriginals = true;
+            }
+        }
+
+        return preserveOriginals;
+    }
+
+    private bool ConfirmReplaceProgramShortcut(string shortcutName)
+    {
+        var dialog = new Window
+        {
+            Title = "替换同名程序",
+            Owner = this,
+            Width = 400,
+            SizeToContent = SizeToContent.Height,
+            MinHeight = 150,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+            ShowInTaskbar = false,
+            WindowStyle = WindowStyle.ToolWindow,
+            Background = System.Windows.SystemColors.WindowBrush
+        };
+
+        var content = new StackPanel { Margin = new Thickness(20) };
+        content.Children.Add(new TextBlock
+        {
+            Text = $"检测到相同程序“{shortcutName}”。是否替换当前分类中的程序文件？",
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 20)
+        });
+
+        var buttons = new StackPanel
+        {
+            Orientation = System.Windows.Controls.Orientation.Horizontal,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Right
+        };
+        var replaceButton = new Button
+        {
+            Content = "替换",
+            IsDefault = true,
+            MinWidth = 84,
+            Padding = new Thickness(14, 6, 14, 6),
+            Margin = new Thickness(0, 0, 8, 0)
+        };
+        replaceButton.Click += (_, _) => dialog.DialogResult = true;
+        var cancelButton = new Button
+        {
+            Content = "取消",
+            IsCancel = true,
+            MinWidth = 84,
+            Padding = new Thickness(14, 6, 14, 6)
+        };
+
+        buttons.Children.Add(replaceButton);
+        buttons.Children.Add(cancelButton);
+        content.Children.Add(buttons);
+        dialog.Content = content;
+
+        return dialog.ShowDialog() == true;
     }
 
     private async void FileCard_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -1896,6 +2232,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        SetSelectedItem(item);
         e.Handled = true;
 
         // GetCursorPos returns physical screen pixels, which is the coordinate
@@ -1928,6 +2265,7 @@ public partial class MainWindow : Window
             try
             {
                 await _viewModel.RemoveDeletedItemsAsync(new[] { itemPath });
+                SetSelectedItem(null);
             }
             catch (Exception ex)
             {
@@ -2319,11 +2657,41 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void SettingsExportData_Click(object sender, RoutedEventArgs e)
+    private async void SettingsExportCategories_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFolderDialog
+        {
+            Title = "选择导出位置",
+            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+            Multiselect = false
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            var result = await _backend.CategoryFolderExport.ExportAsync(dialog.FolderName);
+            MessageBox.Show(
+                this,
+                $"已导出 {result.ExportedCategoryCount} 个分类、{result.ExportedItemCount} 个项目。\n\n导出位置：\n{result.OutputDirectory}\n\n每个自定义分类对应一个同名文件夹；最近打开等系统分类不重复导出。",
+                "导出完成",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            ShowError("导出分类文件失败", ex);
+        }
+    }
+
+    private async void SettingsBackupData_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new WpfSaveFileDialog
         {
-            Title = "导出 DeskZone 数据",
+            Title = "备份 DeskZone 数据",
             Filter = "DeskZone 数据文件 (*.deskzone.zip)|*.deskzone.zip|ZIP 文件 (*.zip)|*.zip",
             DefaultExt = ".deskzone.zip",
             AddExtension = true,
@@ -2341,14 +2709,14 @@ public partial class MainWindow : Window
             await _backend.DataTransfer.ExportAsync(dialog.FileName);
             MessageBox.Show(
                 this,
-                "数据已导出。分类、快捷方式引用、布局和应用设置都已包含在数据文件中。",
-                "导出完成",
+                "数据备份已完成。",
+                "备份完成",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
-            ShowError("导出数据失败", ex);
+            ShowError("备份数据失败", ex);
         }
     }
 
@@ -2654,16 +3022,14 @@ public partial class MainWindow : Window
         Topmost = false;
         // Keep the WPF window out of the global topmost band. The native host
         // owns its desktop-layer placement so ordinary applications can cover it.
-        if (_desktopHost.IsAttached(handle))
+        EnsureWindowVisible();
+        var attached = _desktopHost.IsAttached(handle);
+        if (!attached)
         {
-            Opacity = StablePanelOpacity;
-            IsHitTestVisible = true;
-            return;
+            attached = _desktopHost.TryAttach(handle) && _desktopHost.IsAttached(handle);
         }
 
-        ShowInTaskbar = false;
-        EnsureWindowVisible();
-        var attached = _desktopHost.TryAttach(handle) && _desktopHost.IsAttached(handle);
+        ShowInTaskbar = !attached;
         Opacity = StablePanelOpacity;
         IsHitTestVisible = true;
         if (attached)
@@ -2802,7 +3168,7 @@ public partial class MainWindow : Window
     {
         if (TryGetDroppedFolder(e, out _))
         {
-            e.Effects = DragDropEffects.Link;
+            e.Effects = DragDropEffects.Move;
             NewCategoryButton.BorderBrush = (Brush)FindResource("SkyBrush");
             NewCategoryButton.BorderThickness = new Thickness(1);
             NewCategoryButton.Background = new SolidColorBrush(Color.FromRgb(238, 248, 255));

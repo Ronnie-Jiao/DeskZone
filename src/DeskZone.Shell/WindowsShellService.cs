@@ -18,6 +18,15 @@ public sealed class WindowsShellService : IShellService
         return Task.CompletedTask;
     }
 
+    public Task<bool> DeleteToRecycleBinAsync(
+        string path,
+        IntPtr ownerWindowHandle,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(WindowsShellContextMenuService.TryDeleteToRecycleBin(path, ownerWindowHandle));
+    }
+
     public bool ShowContextMenu(string path, IntPtr ownerWindowHandle, int screenX, int screenY) =>
         WindowsShellContextMenuService.TryShow(path, ownerWindowHandle, screenX, screenY);
 }

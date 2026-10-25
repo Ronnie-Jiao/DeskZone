@@ -21,10 +21,10 @@ DeskZone 的程序可以被更新、替换或重新安装，但用户已经产�
 %LOCALAPPDATA%\DeskZone\
 ```
 
-程序文件位于安装目录，例如：
+新用户首次安装时，程序文件默认位于：
 
 ```text
-C:\Program Files\DeskZone\
+D:\DeskZone\
 ```
 
 两者不能混用。安装器只能替换程序目录中的文件，不得把用户数据库或设置复制到安装目录，也不得在升级时清理数据根目录。
@@ -75,6 +75,8 @@ C:\Program Files\DeskZone\
 ## 卸载策略
 
 默认卸载只移除程序文件、快捷方式和安装器注册信息，保留用户数据。
+
+安装器会在当前用户的 Windows“已安装的应用”中注册 DeskZone，并通过独立卸载确认页启动普通卸载。卸载页需明确说明用户数据保留位置；普通卸载不得提供或隐式执行数据清除。
 
 如果未来需要提供“卸载并清除数据”，必须设计为单独的明确选项，并在执行前显示完整数据目录和不可恢复提示。普通升级流程绝不能触发该选项。
 
@@ -181,7 +183,7 @@ DataPaths.RootDirectory
 
 1. `installer/Publish-DeskZone.ps1` 负责生成独立发布目录。
 2. `installer/Install-DeskZone.ps1` 负责首次安装、覆盖升级、验证和卸载。
-3. 安装器默认使用 `%LOCALAPPDATA%\Programs\DeskZone`，用户数据使用 `%LOCALAPPDATA%\DeskZone`。
+3. 新用户首次安装时，安装器默认使用 `D:\DeskZone`；已有安装继续使用用户数据中记录的原安装目录，用户数据使用 `%LOCALAPPDATA%\DeskZone`。
 4. 升级前自动备份数据库、WAL、SHM 和设置文件。
 5. 程序替换使用临时目录和旧版本回滚目录，替换失败时恢复旧程序。
 6. 普通卸载只删除程序和快捷方式，明确保留用户数据。

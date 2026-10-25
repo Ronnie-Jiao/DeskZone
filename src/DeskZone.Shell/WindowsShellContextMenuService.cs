@@ -9,6 +9,8 @@ namespace DeskZone.Shell;
 /// </summary>
 internal static class WindowsShellContextMenuService
 {
+    private const uint FileOperationDelete = 3;
+    private const ushort FileOperationAllowUndo = 0x0040;
     private const uint ContextMenuFirstCommand = 1;
     private const uint ContextMenuLastCommand = 0x7FFF;
     private const uint ContextMenuFlags = 0x0004; // CMF_EXPLORE
@@ -24,6 +26,54 @@ internal static class WindowsShellContextMenuService
     private const uint WindowMessageNull = 0;
     private static readonly Guid ShellFolderInterfaceGuid = new("000214E6-0000-0000-C000-000000000046");
     private static readonly Guid ContextMenuInterfaceId = new("000214e4-0000-0000-c000-000000000046");
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct ShellFileOperation
+    {
+        public IntPtr WindowHandle;
+        public uint Operation;
+        [MarshalAs(UnmanagedType.LPWStr)]
+        public string? From;
+        [MarshalAs(UnmanagedType.LPWStr)]
+        public string? To;
+        public ushort Flags;
+        [MarshalAs(UnmanagedType.Bool)]
+        public bool AnyOperationsAborted;
+        public IntPtr NameMappings;
+        [MarshalAs(UnmanagedType.LPWStr)]
+        public string? ProgressTitle;
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, EntryPoint = "SHFileOperationW")]
+    private static extern int SHFileOperation(ref ShellFileOperation operation);
+
+    public static bool TryDeleteToRecycleBin(string path, IntPtr ownerWindowHandle)
+    {
+        if (string.IsNullOrWhiteSpace(path) || (!File.Exists(path) && !Directory.Exists(path)))
+        {
+            return false;
+        }
+
+        var operation = new ShellFileOperation
+        {
+            WindowHandle = ownerWindowHandle,
+            Operation = FileOperationDelete,
+            From = $"{Path.GetFullPath(path)}\0\0",
+            Flags = FileOperationAllowUndo
+        };
+        var result = SHFileOperation(ref operation);
+        if (operation.AnyOperationsAborted)
+        {
+            return false;
+        }
+
+        if (result != 0)
+        {
+            throw new System.ComponentModel.Win32Exception(result, "无法将项目移入回收站。");
+        }
+
+        return !File.Exists(path) && !Directory.Exists(path);
+    }
 
     public static bool TryShow(string path, IntPtr ownerWindowHandle, int screenX, int screenY)
     {

@@ -12,8 +12,10 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $dataPath = Join-Path $env:LOCALAPPDATA 'DeskZone'
+$defaultInstallPath = 'D:\DeskZone'
 $startupRegistryPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $startupRegistryValueName = 'DeskZone'
+$uninstallRegistryPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\DeskZone'
 $installLocationPath = Join-Path $dataPath 'install-location.json'
 if ([string]::IsNullOrWhiteSpace($InstallPath)) {
     $savedInstallPath = ''
@@ -27,7 +29,7 @@ if ([string]::IsNullOrWhiteSpace($InstallPath)) {
     }
 
     $InstallPath = if ([string]::IsNullOrWhiteSpace($savedInstallPath)) {
-        Join-Path $env:LOCALAPPDATA 'Programs\DeskZone'
+        $defaultInstallPath
     }
     else {
         $savedInstallPath
@@ -236,6 +238,32 @@ function Remove-DeskZoneStartupRegistration {
     }
 }
 
+function Set-DeskZoneUninstallRegistration {
+    param([Parameter(Mandatory)][string]$ExecutablePath)
+
+    $scriptPath = Join-Path $InstallPath 'Install-DeskZone.ps1'
+    $powerShellPath = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+        throw "无法注册 DeskZone 卸载入口：找不到安装脚本：$scriptPath"
+    }
+
+    $uninstallCommand = '"{0}" -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File "{1}" -Action Uninstall -Interactive' -f $powerShellPath, $scriptPath
+    New-Item -Path $uninstallRegistryPath -Force | Out-Null
+    Set-ItemProperty -Path $uninstallRegistryPath -Name DisplayName -Value '桌序 DeskZone'
+    Set-ItemProperty -Path $uninstallRegistryPath -Name DisplayIcon -Value $ExecutablePath
+    Set-ItemProperty -Path $uninstallRegistryPath -Name InstallLocation -Value $InstallPath
+    Set-ItemProperty -Path $uninstallRegistryPath -Name Publisher -Value 'DeskZone'
+    Set-ItemProperty -Path $uninstallRegistryPath -Name UninstallString -Value $uninstallCommand
+    Set-ItemProperty -Path $uninstallRegistryPath -Name NoModify -Value 1 -Type DWord
+    Set-ItemProperty -Path $uninstallRegistryPath -Name NoRepair -Value 1 -Type DWord
+}
+
+function Remove-DeskZoneUninstallRegistration {
+    if (Test-Path -LiteralPath $uninstallRegistryPath) {
+        Remove-Item -LiteralPath $uninstallRegistryPath -Recurse -Force
+    }
+}
+
 function Install-DeskZone {
     param(
         [Parameter(Mandatory)][string]$PackagePath,
@@ -306,6 +334,8 @@ function Install-DeskZone {
             InstallDirectory = $InstallPath
             UpdatedAtUtc = [DateTime]::UtcNow.ToString('O')
         } | ConvertTo-Json | Set-Content -LiteralPath $installLocationPath -Encoding UTF8
+
+        Set-DeskZoneUninstallRegistration -ExecutablePath (Join-Path $InstallPath 'DeskZone.exe')
 
         if (Test-Path -LiteralPath $previousPath) {
             Remove-Item -LiteralPath $previousPath -Recurse -Force
@@ -711,12 +741,10 @@ function Show-DeskZoneInstallWizard {
     Add-Type -AssemblyName System.Drawing
     Initialize-InstallerVisualTypes
 
-    $backgroundPath = Resolve-InstallerResourcePath 'InstallerBackground.png'
     $logoPath = Resolve-InstallerResourcePath 'DeskZoneLogoCompact.png'
     $folderIconPath = Resolve-InstallerResourcePath 'InstallerFolderIcon.png'
     $iconPath = Resolve-InstallerResourcePath 'DeskZoneLogo.ico'
 
-    $backgroundImage = [System.Drawing.Image]::FromFile($backgroundPath)
     $logoImage = [System.Drawing.Image]::FromFile($logoPath)
     $folderIconImage = [System.Drawing.Image]::FromFile($folderIconPath)
     $installerIcon = [System.Drawing.Icon]::new($iconPath)
@@ -725,42 +753,45 @@ function Show-DeskZoneInstallWizard {
     $form.Text = '安装 DeskZone'
     $form.StartPosition = 'CenterScreen'
     $form.FormBorderStyle = 'None'
-    $form.ClientSize = New-Object System.Drawing.Size(1040, 630)
-    $form.MinimumSize = New-Object System.Drawing.Size(900, 570)
+    $form.ClientSize = New-Object System.Drawing.Size(720, 470)
+    $form.MinimumSize = New-Object System.Drawing.Size(720, 470)
+    $form.MaximumSize = New-Object System.Drawing.Size(720, 470)
     $form.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 10)
-    $form.BackColor = [System.Drawing.Color]::White
-    $form.BackgroundImage = $backgroundImage
-    $form.BackgroundImageLayout = 'Stretch'
+    $form.BackColor = [System.Drawing.Color]::FromArgb(241, 246, 253)
     $form.KeyPreview = $true
     $form.Icon = $installerIcon
-    $form.ShowIcon = $true
+    $form.ShowIcon = $false
 
     $header = New-Object DeskZoneInstaller.GlassPanel
     $header.Dock = 'Top'
-    $header.Height = 46
+    $header.Height = 56
     $header.CornerRadius = 0
-    $header.SurfaceColor = [System.Drawing.Color]::FromArgb(220, 252, 254, 255)
+    $header.SurfaceColor = [System.Drawing.Color]::White
     $header.StrokeColor = [System.Drawing.Color]::Transparent
     $header.StrokeWidth = 0
 
     $closeButton = New-InstallerWindowButton '×'
-    $maximizeButton = New-InstallerWindowButton '□'
-    $minimizeButton = New-InstallerWindowButton '−'
     $header.Controls.Add($closeButton)
-    $header.Controls.Add($maximizeButton)
-    $header.Controls.Add($minimizeButton)
 
     $headerIcon = New-Object System.Windows.Forms.PictureBox
     $headerIcon.Image = $logoImage
     $headerIcon.SizeMode = 'Zoom'
     $headerIcon.BackColor = [System.Drawing.Color]::Transparent
-    $headerIcon.SetBounds(28, 9, 28, 28)
+    $headerIcon.SetBounds(28, 13, 30, 30)
     $header.Controls.Add($headerIcon)
 
-    $headerTitle = New-InstallerLabel -Text '安装  DeskZone' -FontSize 12 -Bold $true
-    $headerTitle.Location = New-Object System.Drawing.Point(68, 13)
+    $headerTitle = New-InstallerLabel -Text '桌序 DeskZone' -FontSize 12 -Bold $true
+    $headerTitle.Location = New-Object System.Drawing.Point(68, 18)
     $header.Controls.Add($headerTitle)
     $form.Controls.Add($header)
+
+    $card = New-Object DeskZoneInstaller.GlassPanel
+    $card.SetBounds(24, 72, 672, 374)
+    $card.CornerRadius = 18
+    $card.SurfaceColor = [System.Drawing.Color]::White
+    $card.StrokeColor = [System.Drawing.Color]::FromArgb(205, 220, 234, 250)
+    $card.StrokeWidth = 1
+    $form.Controls.Add($card)
 
     $dragWindow = {
         param($sender, $eventArgs)
@@ -771,39 +802,26 @@ function Show-DeskZoneInstallWizard {
     $header.Add_MouseDown($dragWindow)
     $headerTitle.Add_MouseDown($dragWindow)
     $headerIcon.Add_MouseDown($dragWindow)
-    $header.Add_MouseDoubleClick({
-        if ($form.WindowState -eq [System.Windows.Forms.FormWindowState]::Maximized) {
-            $form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
-        }
-        else {
-            $form.WindowState = [System.Windows.Forms.FormWindowState]::Maximized
-        }
-    })
-    $minimizeButton.Add_Click({ $form.WindowState = [System.Windows.Forms.FormWindowState]::Minimized })
-    $maximizeButton.Add_Click({
-        if ($form.WindowState -eq [System.Windows.Forms.FormWindowState]::Maximized) {
-            $form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
-        }
-        else {
-            $form.WindowState = [System.Windows.Forms.FormWindowState]::Maximized
-        }
-    })
     $closeButton.Add_Click({ $form.Close() })
 
-    $pathLabel = New-InstallerLabel -Text '安装目录' -FontSize 12 -Bold $true
-    $form.Controls.Add($pathLabel)
+    $pageTitle = New-InstallerLabel -Text '安装 DeskZone' -FontSize 22 -Bold $true
+    $pageTitle.Location = New-Object System.Drawing.Point(54, 100)
+    $card.Controls.Add($pageTitle)
+
+    $pathLabel = New-InstallerLabel -Text '安装位置' -FontSize 10 -Bold $true -Color ([System.Drawing.Color]::FromArgb(85, 105, 133))
+    $card.Controls.Add($pathLabel)
 
     $pathContainer = New-Object DeskZoneInstaller.GlassPanel
     $pathContainer.CornerRadius = 10
-    $pathContainer.SurfaceColor = [System.Drawing.Color]::FromArgb(228, 255, 255, 255)
-    $pathContainer.StrokeColor = [System.Drawing.Color]::FromArgb(185, 126, 182, 246)
-    $form.Controls.Add($pathContainer)
+    $pathContainer.SurfaceColor = [System.Drawing.Color]::FromArgb(249, 251, 255)
+    $pathContainer.StrokeColor = [System.Drawing.Color]::FromArgb(195, 214, 236, 255)
+    $card.Controls.Add($pathContainer)
 
     $folderIcon = New-Object System.Windows.Forms.PictureBox
     $folderIcon.Image = $folderIconImage
     $folderIcon.SizeMode = 'Zoom'
     $folderIcon.BackColor = [System.Drawing.Color]::Transparent
-    $folderIcon.SetBounds(16, 9, 32, 29)
+    $folderIcon.SetBounds(16, 10, 30, 28)
     $pathContainer.Controls.Add($folderIcon)
 
     $pathBox = New-Object System.Windows.Forms.TextBox
@@ -823,7 +841,7 @@ function Show-DeskZoneInstallWizard {
     $browseButton.EndColor = [System.Drawing.Color]::FromArgb(232, 230, 243, 255)
     $browseButton.StrokeColor = [System.Drawing.Color]::FromArgb(185, 126, 182, 246)
     $browseButton.StrokeWidth = 1
-    $form.Controls.Add($browseButton)
+    $card.Controls.Add($browseButton)
     $browseButton.Add_Click({
         $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
         $dialog.Description = '选择 DeskZone 程序安装位置'
@@ -837,15 +855,17 @@ function Show-DeskZoneInstallWizard {
         }
     })
 
-    $note = New-InstallerLabel -Text '安装完成后会创建或更新桌面 DeskZone 快捷方式。' -FontSize 10 -Color ([System.Drawing.Color]::FromArgb(77, 108, 155))
-    $form.Controls.Add($note)
+    $note = New-InstallerLabel -Text '升级会保留已有分类、设置与备份。' -FontSize 9 -Color ([System.Drawing.Color]::FromArgb(91, 112, 143))
+    $card.Controls.Add($note)
 
     $progress = New-Object DeskZoneInstaller.AccentProgressBar
     $progress.Value = 0
-    $form.Controls.Add($progress)
+    $progress.Visible = $false
+    $card.Controls.Add($progress)
 
     $status = New-InstallerLabel -Text '准备安装' -FontSize 12 -Bold $true -Color ([System.Drawing.Color]::FromArgb(71, 105, 154))
-    $form.Controls.Add($status)
+    $status.Visible = $false
+    $card.Controls.Add($status)
 
     $installButton = New-Object DeskZoneInstaller.GradientButton
     $installButton.Text = '安装'
@@ -854,7 +874,7 @@ function Show-DeskZoneInstallWizard {
     $installButton.StartColor = [System.Drawing.Color]::FromArgb(0, 96, 252)
     $installButton.EndColor = [System.Drawing.Color]::FromArgb(2, 208, 252)
     $installButton.StrokeColor = [System.Drawing.Color]::FromArgb(65, 104, 174, 255)
-    $form.Controls.Add($installButton)
+    $card.Controls.Add($installButton)
 
     $cancelButton = New-Object DeskZoneInstaller.GradientButton
     $cancelButton.Text = '取消'
@@ -866,7 +886,7 @@ function Show-DeskZoneInstallWizard {
     $cancelButton.StrokeColor = [System.Drawing.Color]::FromArgb(185, 126, 182, 246)
     $cancelButton.StrokeWidth = 1
     $cancelButton.Add_Click({ $form.Close() })
-    $form.Controls.Add($cancelButton)
+    $card.Controls.Add($cancelButton)
 
     $openButton = New-Object DeskZoneInstaller.GradientButton
     $openButton.Text = '立即打开'
@@ -880,7 +900,7 @@ function Show-DeskZoneInstallWizard {
         Start-Process -FilePath (Join-Path $openButton.Tag 'DeskZone.exe')
         $form.Close()
     })
-    $form.Controls.Add($openButton)
+    $card.Controls.Add($openButton)
 
     $finishButton = New-Object DeskZoneInstaller.GradientButton
     $finishButton.Text = '完成'
@@ -893,39 +913,39 @@ function Show-DeskZoneInstallWizard {
     $finishButton.StrokeWidth = 1
     $finishButton.Visible = $false
     $finishButton.Add_Click({ $form.Close() })
-    $form.Controls.Add($finishButton)
+    $card.Controls.Add($finishButton)
 
     $layoutControls = {
         if ($form.IsDisposed -or $form.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized) {
             return
         }
 
-        $width = $form.ClientSize.Width
-        $height = $form.ClientSize.Height
-        $margin = [Math]::Max(54, [Math]::Round($width * 0.066))
-        $browseWidth = 128
-        $buttonHeight = 48
-        $buttonGap = 18
-        $footerBottom = 46
-        $actionTop = $height - $footerBottom - $buttonHeight
-        $statusTop = $actionTop - 49
-        $progressTop = $statusTop - 31
-        $noteTop = $progressTop - 47
-        $inputTop = $noteTop - 62
-        $labelTop = $inputTop - 33
+        $width = $card.ClientSize.Width
+        $height = $card.ClientSize.Height
+        $margin = 30
+        $browseWidth = 98
+        $buttonHeight = 44
+        $buttonGap = 12
+        $actionTop = $height - 24 - $buttonHeight
+        $statusTop = $actionTop - 39
+        $progressTop = $statusTop - 20
+        $noteTop = $progressTop - 34
+        $inputTop = $noteTop - 76
+        $labelTop = $inputTop - 28
         $pathWidth = [Math]::Max(300, $width - ($margin * 2) - $browseWidth - $buttonGap)
 
+        $pageTitle.Location = New-Object System.Drawing.Point($margin, 27)
         $pathLabel.Location = New-Object System.Drawing.Point($margin, $labelTop)
         $pathContainer.SetBounds($margin, $inputTop, $pathWidth, 48)
-        $folderIcon.SetBounds(16, 9, 32, 29)
-        $pathBox.SetBounds(56, 13, [Math]::Max(80, $pathWidth - 70), 24)
+        $folderIcon.SetBounds(14, 10, 30, 28)
+        $pathBox.SetBounds(52, 12, [Math]::Max(80, $pathWidth - 64), 24)
         $browseButton.SetBounds($margin + $pathWidth + $buttonGap, $inputTop, $browseWidth, 48)
         $note.Location = New-Object System.Drawing.Point($margin, $noteTop)
-        $progress.SetBounds($margin, $progressTop, $width - ($margin * 2), 12)
+        $progress.SetBounds($margin, $progressTop, $width - ($margin * 2), 8)
         $status.Location = New-Object System.Drawing.Point($margin, $statusTop)
 
-        $secondaryWidth = 138
-        $primaryWidth = 160
+        $secondaryWidth = 124
+        $primaryWidth = 148
         $secondaryLeft = $width - $margin - $secondaryWidth
         $primaryLeft = $secondaryLeft - $buttonGap - $primaryWidth
         $installButton.SetBounds($primaryLeft, $actionTop, $primaryWidth, $buttonHeight)
@@ -954,6 +974,9 @@ function Show-DeskZoneInstallWizard {
             $closeButton.Enabled = $false
             $pathBox.ReadOnly = $true
             $progress.Value = 0
+            $progress.Visible = $true
+            $status.Visible = $true
+            $status.Text = '正在准备安装…'
             $reportProgress = {
                 param([int]$Percent, [string]$Message)
                 $progress.Value = [Math]::Max(0, [Math]::Min(100, $Percent))
@@ -972,16 +995,18 @@ function Show-DeskZoneInstallWizard {
             }
 
             $status.Text = '安装完成。可立即打开 DeskZone。'
-            $headerTitle.Text = '安装完成  DeskZone'
+            $pageTitle.Text = '安装完成'
             if ($installResult.DesktopShortcut.Created) {
-                $note.Text = '已创建桌面和开始菜单快捷方式。'
+                $note.Text = '桌面和开始菜单快捷方式已就绪。'
             }
             elseif ($installResult.DesktopShortcut.RemovedDuplicates -gt 0) {
-                $note.Text = '已更新原有快捷方式，并清理重复的桌面入口。'
+                $note.Text = '快捷方式已更新，重复的桌面入口已清理。'
             }
             else {
-                $note.Text = '已更新原有桌面和开始菜单快捷方式。'
+                $note.Text = '原有桌面和开始菜单快捷方式已更新。'
             }
+            $progress.Visible = $false
+            $status.Visible = $false
             $openButton.Tag = $targetPath
             $installButton.Visible = $false
             $cancelButton.Visible = $false
@@ -993,6 +1018,8 @@ function Show-DeskZoneInstallWizard {
         }
         catch {
             $status.Text = '安装失败，请检查安装目录后重试。'
+            $status.Visible = $true
+            $progress.Visible = $false
             $installButton.Enabled = $true
             $cancelButton.Enabled = $true
             $browseButton.Enabled = $true
@@ -1013,7 +1040,6 @@ function Show-DeskZoneInstallWizard {
         [void]$form.ShowDialog()
     }
     finally {
-        $backgroundImage.Dispose()
         $logoImage.Dispose()
         $folderIconImage.Dispose()
         $installerIcon.Dispose()
@@ -1021,9 +1047,208 @@ function Show-DeskZoneInstallWizard {
     }
 }
 
+function Show-DeskZoneUninstallWizard {
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    Initialize-InstallerVisualTypes
+
+    $logoPath = Resolve-InstallerResourcePath 'DeskZoneLogoCompact.png'
+    $logoStream = [System.IO.MemoryStream]::new([System.IO.File]::ReadAllBytes($logoPath))
+    $logoImage = [System.Drawing.Image]::FromStream($logoStream)
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = '卸载 DeskZone'
+    $form.StartPosition = 'CenterScreen'
+    $form.FormBorderStyle = 'None'
+    $form.ClientSize = New-Object System.Drawing.Size(720, 470)
+    $form.MinimumSize = New-Object System.Drawing.Size(720, 470)
+    $form.MaximumSize = New-Object System.Drawing.Size(720, 470)
+    $form.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 10)
+    $form.BackColor = [System.Drawing.Color]::FromArgb(241, 246, 253)
+    $form.KeyPreview = $true
+    $form.ShowIcon = $false
+
+    $header = New-Object DeskZoneInstaller.GlassPanel
+    $header.Dock = 'Top'
+    $header.Height = 56
+    $header.CornerRadius = 0
+    $header.SurfaceColor = [System.Drawing.Color]::White
+    $header.StrokeColor = [System.Drawing.Color]::Transparent
+    $header.StrokeWidth = 0
+    $form.Controls.Add($header)
+
+    $closeButton = New-InstallerWindowButton '×'
+    $header.Controls.Add($closeButton)
+    $headerIcon = New-Object System.Windows.Forms.PictureBox
+    $headerIcon.Image = $logoImage
+    $headerIcon.SizeMode = 'Zoom'
+    $headerIcon.BackColor = [System.Drawing.Color]::Transparent
+    $headerIcon.SetBounds(28, 13, 30, 30)
+    $header.Controls.Add($headerIcon)
+
+    $headerTitle = New-InstallerLabel -Text '桌序 DeskZone' -FontSize 12 -Bold $true
+    $headerTitle.Location = New-Object System.Drawing.Point(68, 18)
+    $header.Controls.Add($headerTitle)
+
+    $card = New-Object DeskZoneInstaller.GlassPanel
+    $card.SetBounds(24, 72, 672, 374)
+    $card.CornerRadius = 18
+    $card.SurfaceColor = [System.Drawing.Color]::White
+    $card.StrokeColor = [System.Drawing.Color]::FromArgb(205, 220, 234, 250)
+    $card.StrokeWidth = 1
+    $form.Controls.Add($card)
+
+    $dragWindow = {
+        param($sender, $eventArgs)
+        if ($eventArgs.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
+            [DeskZoneInstaller.WindowChrome]::Drag($form)
+        }
+    }
+    $header.Add_MouseDown($dragWindow)
+    $headerTitle.Add_MouseDown($dragWindow)
+    $headerIcon.Add_MouseDown($dragWindow)
+    $closeButton.Add_Click({ $form.Close() })
+
+    $pageTitle = New-InstallerLabel -Text '卸载 DeskZone' -FontSize 22 -Bold $true
+    $pageTitle.Location = New-Object System.Drawing.Point(30, 27)
+    $card.Controls.Add($pageTitle)
+
+    $pathLabel = New-InstallerLabel -Text '安装位置' -FontSize 10 -Bold $true -Color ([System.Drawing.Color]::FromArgb(85, 105, 133))
+    $pathLabel.Location = New-Object System.Drawing.Point(30, 108)
+    $card.Controls.Add($pathLabel)
+
+    $pathContainer = New-Object DeskZoneInstaller.GlassPanel
+    $pathContainer.SetBounds(30, 136, 612, 48)
+    $pathContainer.CornerRadius = 10
+    $pathContainer.SurfaceColor = [System.Drawing.Color]::FromArgb(249, 251, 255)
+    $pathContainer.StrokeColor = [System.Drawing.Color]::FromArgb(195, 214, 236, 255)
+    $pathContainer.StrokeWidth = 1
+    $card.Controls.Add($pathContainer)
+
+    $pathBox = New-Object System.Windows.Forms.TextBox
+    $pathBox.Text = $InstallPath
+    $pathBox.ReadOnly = $true
+    $pathBox.BorderStyle = 'None'
+    $pathBox.BackColor = [System.Drawing.Color]::FromArgb(249, 251, 255)
+    $pathBox.ForeColor = [System.Drawing.Color]::FromArgb(11, 36, 71)
+    $pathBox.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 10)
+    $pathBox.SetBounds(16, 13, 576, 22)
+    $pathContainer.Controls.Add($pathBox)
+
+    $note = New-InstallerLabel -Text '分类、设置和备份会保留。' -FontSize 10 -Color ([System.Drawing.Color]::FromArgb(48, 112, 83))
+    $note.Location = New-Object System.Drawing.Point(30, 204)
+    $card.Controls.Add($note)
+
+    $progress = New-Object DeskZoneInstaller.AccentProgressBar
+    $progress.SetBounds(30, 248, 612, 8)
+    $progress.Value = 0
+    $progress.Visible = $false
+    $card.Controls.Add($progress)
+
+    $status = New-InstallerLabel -Text '准备卸载' -FontSize 9 -Color ([System.Drawing.Color]::FromArgb(91, 112, 143))
+    $status.Location = New-Object System.Drawing.Point(30, 268)
+    $status.Visible = $false
+    $card.Controls.Add($status)
+
+    $uninstallButton = New-Object DeskZoneInstaller.GradientButton
+    $uninstallButton.Text = '卸载'
+    $uninstallButton.SetBounds(370, 306, 148, 44)
+    $uninstallButton.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 11, [System.Drawing.FontStyle]::Bold)
+    $uninstallButton.ForeColor = [System.Drawing.Color]::White
+    $uninstallButton.StartColor = [System.Drawing.Color]::FromArgb(215, 55, 65)
+    $uninstallButton.EndColor = [System.Drawing.Color]::FromArgb(185, 38, 52)
+    $uninstallButton.StrokeColor = [System.Drawing.Color]::FromArgb(120, 185, 38, 52)
+    $card.Controls.Add($uninstallButton)
+
+    $cancelButton = New-Object DeskZoneInstaller.GradientButton
+    $cancelButton.Text = '取消'
+    $cancelButton.SetBounds(530, 306, 112, 44)
+    $cancelButton.CornerRadius = 10
+    $cancelButton.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 10, [System.Drawing.FontStyle]::Bold)
+    $cancelButton.ForeColor = [System.Drawing.Color]::FromArgb(55, 75, 102)
+    $cancelButton.StartColor = [System.Drawing.Color]::FromArgb(247, 250, 255)
+    $cancelButton.EndColor = [System.Drawing.Color]::FromArgb(235, 242, 251)
+    $cancelButton.StrokeColor = [System.Drawing.Color]::FromArgb(205, 220, 234, 250)
+    $cancelButton.StrokeWidth = 1
+    $card.Controls.Add($cancelButton)
+    $cancelButton.Add_Click({ $form.Close() })
+
+    $finishButton = New-Object DeskZoneInstaller.GradientButton
+    $finishButton.Text = '完成'
+    $finishButton.SetBounds(494, 306, 148, 44)
+    $finishButton.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 10, [System.Drawing.FontStyle]::Bold)
+    $finishButton.ForeColor = [System.Drawing.Color]::FromArgb(55, 75, 102)
+    $finishButton.StartColor = [System.Drawing.Color]::FromArgb(247, 250, 255)
+    $finishButton.EndColor = [System.Drawing.Color]::FromArgb(235, 242, 251)
+    $finishButton.StrokeColor = [System.Drawing.Color]::FromArgb(205, 220, 234, 250)
+    $finishButton.StrokeWidth = 1
+    $finishButton.Visible = $false
+    $card.Controls.Add($finishButton)
+    $finishButton.Add_Click({ $form.Close() })
+
+    $uninstallButton.Add_Click({
+        $uninstallButton.Enabled = $false
+        $cancelButton.Enabled = $false
+        $closeButton.Enabled = $false
+        $progress.Visible = $true
+        $status.Visible = $true
+        $reportProgress = {
+            param([int]$Percent, [string]$Message)
+            $progress.Value = [Math]::Max(0, [Math]::Min(100, $Percent))
+            $status.Text = $Message
+            $form.Refresh()
+            [System.Windows.Forms.Application]::DoEvents()
+        }
+
+        try {
+            Uninstall-DeskZone -ProgressReporter $reportProgress
+            $pageTitle.Text = '卸载完成'
+            $note.Text = '用户数据已保留在 %LOCALAPPDATA%\DeskZone。'
+            $pathLabel.Visible = $false
+            $pathContainer.Visible = $false
+            $progress.Visible = $false
+            $status.Visible = $false
+            $uninstallButton.Visible = $false
+            $cancelButton.Visible = $false
+            $finishButton.Visible = $true
+            $closeButton.Enabled = $true
+            $form.CancelButton = $finishButton
+        }
+        catch {
+            $progress.Visible = $false
+            $status.Text = '卸载未能完成，请重试。'
+            $status.Visible = $true
+            $uninstallButton.Enabled = $true
+            $cancelButton.Enabled = $true
+            $closeButton.Enabled = $true
+            [System.Windows.Forms.MessageBox]::Show(
+                $form,
+                $_.Exception.Message,
+                'DeskZone 卸载失败',
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+        }
+    })
+
+    $form.AcceptButton = $uninstallButton
+    $form.CancelButton = $cancelButton
+    try {
+        [void]$form.ShowDialog()
+    }
+    finally {
+        $logoImage.Dispose()
+        $logoStream.Dispose()
+        $form.Dispose()
+    }
+}
+
 function Uninstall-DeskZone {
+    param([scriptblock]$ProgressReporter)
+
+    if ($ProgressReporter) { & $ProgressReporter 10 '正在关闭 DeskZone…' }
     Stop-DeskZone
 
+    if ($ProgressReporter) { & $ProgressReporter 35 '正在移除快捷方式…' }
     Remove-DeskZoneStartupRegistration
 
     $startMenuShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'DeskZone.lnk'
@@ -1032,10 +1257,13 @@ function Uninstall-DeskZone {
         Remove-ShortcutIfPresent $desktopShortcut.Path
     }
 
+    if ($ProgressReporter) { & $ProgressReporter 65 '正在移除程序文件…' }
+    Remove-DeskZoneUninstallRegistration
     if (Test-Path -LiteralPath $InstallPath) {
         Remove-Item -LiteralPath $InstallPath -Recurse -Force
     }
 
+    if ($ProgressReporter) { & $ProgressReporter 100 '卸载完成' }
     Write-Host "DeskZone 程序已卸载。"
     Write-Host "用户数据已保留：$dataPath"
 }
@@ -1074,6 +1302,13 @@ switch ($Action) {
             Install-DeskZone $SourcePath
         }
     }
-    'Uninstall' { Uninstall-DeskZone }
+    'Uninstall' {
+        if ($Interactive) {
+            Show-DeskZoneUninstallWizard
+        }
+        else {
+            Uninstall-DeskZone
+        }
+    }
     'Verify' { Verify-DeskZone }
 }

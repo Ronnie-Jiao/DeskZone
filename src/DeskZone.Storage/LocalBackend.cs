@@ -14,6 +14,7 @@ public sealed class LocalBackend
         ISettingsStore settings,
         IBackupService backup,
         IDataTransferService dataTransfer,
+        ICategoryFolderExportService categoryFolderExport,
         ICategoryService categories,
         IDesktopItemService items,
         ILayoutService layout,
@@ -25,6 +26,7 @@ public sealed class LocalBackend
         Settings = settings;
         Backup = backup;
         DataTransfer = dataTransfer;
+        CategoryFolderExport = categoryFolderExport;
         Categories = categories;
         Items = items;
         Layout = layout;
@@ -37,6 +39,7 @@ public sealed class LocalBackend
     public ISettingsStore Settings { get; }
     public IBackupService Backup { get; }
     public IDataTransferService DataTransfer { get; }
+    public ICategoryFolderExportService CategoryFolderExport { get; }
     public ICategoryService Categories { get; }
     public IDesktopItemService Items { get; }
     public ILayoutService Layout { get; }
@@ -50,6 +53,7 @@ public sealed class LocalBackend
         var dataTransfer = new DataTransferService(paths, connections, backup);
         var initializer = new SqliteStorageInitializer(paths, connections, backup);
         var workspace = new SqliteWorkspaceStore(connections);
+        var categoryFolderExport = new CategoryFolderExportService(workspace);
         var settings = new JsonSettingsStore(paths.RootDirectory);
 
         return new LocalBackend(
@@ -59,6 +63,7 @@ public sealed class LocalBackend
             settings,
             backup,
             dataTransfer,
+            categoryFolderExport,
             new CategoryService(workspace),
             new DesktopItemService(workspace, paths.ManagedStorageDirectory, shortcutTargetResolver),
             new LayoutService(workspace),
