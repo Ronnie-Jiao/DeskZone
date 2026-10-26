@@ -3,8 +3,10 @@
 当前提供可直接运行的 PowerShell 安装/升级脚本；正式发布阶段可在此基础上封装为签名的 MSIX、WiX 或自解压安装包。所有安装方式都必须遵守
 [`docs/INSTALLATION-AND-UPDATES.md`](../docs/INSTALLATION-AND-UPDATES.md) 中的数据保留约束。
 
-仓库现在也提供单文件 EXE 安装包构建脚本。它使用 Windows IExpress 将自包含发布文件和数据保留安装脚本封装为一个 `DeskZone-Setup.exe`。每次重新打包都会覆盖
-`installer\output\DeskZone-Setup.exe`，不会按时间戳生成新的安装包文件；安装包文件和安装向导窗口都使用 DeskZone 图标。
+仓库提供单文件 EXE 安装包构建脚本，使用本机已安装的 Inno Setup 6 将完整自包含发布目录（含子目录）和数据保留安装脚本封装为 `DeskZone-Setup.exe`。默认输出到新的
+`artifacts\windows-installer-yyyyMMdd-HHmmss\`，保留旧产物；显式指定的发布目录或安装包已存在时会拒绝覆盖。安装包图标在编译时嵌入，不再对完成后的 EXE 修改资源。
+
+Inno Setup 只负责显示解压进度、解压和等待安装向导退出，不注册第二份产品或卸载入口。目录选择、升级备份、程序替换、快捷方式和普通卸载仍由现有 PowerShell 向导处理。
 
 发布前需要明确：
 
@@ -22,14 +24,17 @@
 # 发布自包含运行包；默认不要求目标电脑预装 .NET 10 Desktop Runtime
 powershell -ExecutionPolicy Bypass -File .\installer\Publish-DeskZone.ps1
 
-# 生成单文件 EXE 安装包；默认使用目标电脑的 .NET 10 Desktop Runtime
+# 生成 x64 自包含 EXE 安装包；不要求目标电脑预装 .NET 10 Desktop Runtime
 powershell -ExecutionPolicy Bypass -File .\installer\Build-DeskZoneInstaller.ps1
+
+# 编译器不在常见目录或 PATH 时，显式指定本机已有的 ISCC.exe
+# powershell -ExecutionPolicy Bypass -File .\installer\Build-DeskZoneInstaller.ps1 -CompilerPath "C:\工具\Inno Setup 6\ISCC.exe"
 
 # 如明确确认目标电脑已经安装对应运行时，才使用框架依赖版本
 powershell -ExecutionPolicy Bypass -File .\installer\Publish-DeskZone.ps1 -SelfContained false
 
 # 打开带有目录选择、进度和完成页的安装向导
-powershell -ExecutionPolicy Bypass -File .\installer\Install-DeskZone.ps1 -Interactive
+powershell -STA -ExecutionPolicy Bypass -File .\installer\Start-DeskZoneInstaller.ps1
 
 # 检查程序和用户数据是否存在
 powershell -ExecutionPolicy Bypass -File .\installer\Install-DeskZone.ps1 -Action Verify
@@ -63,3 +68,10 @@ D:\DeskZone
 - 普通卸载只移除程序，不删除用户数据库、设置和备份。
 - “卸载并清除数据”如果未来提供，必须是单独的、明确确认的操作。
 - 安装器必须保留稳定的产品标识和升级标识，避免升级被识别成另一份独立安装。
+
+## 构建核对与启动诊断
+
+- 构建仅接受编译器正常退出且生成非空 EXE；同目录保留 `compiler.log`、全部文件的长度/SHA-256 清单 `package-manifest.json` 和安装包哈希回执 `build-receipt.json`。编译失败留下的文件不能交付。
+- 启动入口 `Start-DeskZoneInstaller.ps1` 捕获安装脚本加载、路径初始化和界面创建错误，显示错误提示并返回非零退出码。日志位于 `%LOCALAPPDATA%\DeskZone\logs\installer-yyyyMMdd-HHmmss-PID.log`；安装/卸载过程中已处理的异常也写入日志。
+- EXE 直接以绝对路径启动 Windows PowerShell，等待向导退出后才清理临时目录；无法创建进程或入口返回失败时，外层显示错误。双击 CMD 的失败分支会保留控制台提示。
+- 构建、PowerShell 语法解析、内嵌 C# 编译和静态文件清单核对均不等同于安装界面或升级功能验收。未获本轮明确授权时，不启动安装器或客户端。

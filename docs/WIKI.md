@@ -214,6 +214,8 @@ DeskZone 的程序文件和用户数据分开保存。仓库提供可执行的 P
 详细的安装器、数据库迁移、备份和验收规则见 [`INSTALLATION-AND-UPDATES.md`](INSTALLATION-AND-UPDATES.md)。
 安装脚本的使用方法见 [`../installer/README.md`](../installer/README.md)。
 
+单文件 EXE 使用本机 Inno Setup 6 编译，完整保留发布子目录，默认生成在新的 `artifacts\windows-installer-yyyyMMdd-HHmmss\` 中。外层解压后等待原有安装向导退出；启动失败会显示提示，详细日志保存在 `%LOCALAPPDATA%\DeskZone\logs\installer-*.log`。构建回执和文件哈希清单只证明构建及静态核对完成，安装界面与用户端安装仍需单独验收。
+
 ## 开发与构建
 
 ### AI 修改记录（开始工作前必读）

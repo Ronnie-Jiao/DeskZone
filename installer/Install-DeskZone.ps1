@@ -241,13 +241,13 @@ function Remove-DeskZoneStartupRegistration {
 function Set-DeskZoneUninstallRegistration {
     param([Parameter(Mandatory)][string]$ExecutablePath)
 
-    $scriptPath = Join-Path $InstallPath 'Install-DeskZone.ps1'
+    $scriptPath = Join-Path $InstallPath 'Start-DeskZoneInstaller.ps1'
     $powerShellPath = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
     if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
         throw "无法注册 DeskZone 卸载入口：找不到安装脚本：$scriptPath"
     }
 
-    $uninstallCommand = '"{0}" -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File "{1}" -Action Uninstall -Interactive' -f $powerShellPath, $scriptPath
+    $uninstallCommand = '"{0}" -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File "{1}" -Action Uninstall' -f $powerShellPath, $scriptPath
     New-Item -Path $uninstallRegistryPath -Force | Out-Null
     Set-ItemProperty -Path $uninstallRegistryPath -Name DisplayName -Value '桌序 DeskZone'
     Set-ItemProperty -Path $uninstallRegistryPath -Name DisplayIcon -Value $ExecutablePath
@@ -305,6 +305,16 @@ function Install-DeskZone {
 
         Report-Progress 45 '正在复制程序文件…'
         Get-ChildItem -LiteralPath $PackagePath -Force | Copy-Item -Destination $stagePath -Recurse -Force
+
+        # Also support installation directly from a repository publish folder.
+        # The EXE package already contains these files; copy the same entry points
+        # and resources when the caller supplied application files only.
+        foreach ($supportName in @('Install-DeskZone.ps1', 'Start-DeskZoneInstaller.ps1', 'Install-DeskZone.cmd')) {
+            Copy-Item -LiteralPath (Join-Path $PSScriptRoot $supportName) -Destination (Join-Path $stagePath $supportName) -Force
+        }
+        foreach ($resourceName in @('DeskZoneLogo.ico', 'DeskZoneLogoCompact.png', 'InstallerFolderIcon.png')) {
+            Copy-Item -LiteralPath (Resolve-InstallerResourcePath $resourceName) -Destination (Join-Path $stagePath $resourceName) -Force
+        }
 
         $hadExistingInstall = Test-Path -LiteralPath $InstallPath
         if ($hadExistingInstall) {
@@ -723,7 +733,8 @@ function Resolve-InstallerResourcePath {
 
     $candidates = @(
         (Join-Path $PSScriptRoot (Join-Path 'assets' $FileName)),
-        (Join-Path $PSScriptRoot $FileName)
+        (Join-Path $PSScriptRoot $FileName),
+        (Join-Path (Split-Path -Parent $PSScriptRoot) (Join-Path 'src\DeskZone.App\Assets' $FileName))
     )
     foreach ($candidate in $candidates) {
         if (Test-Path -LiteralPath $candidate -PathType Leaf) {
@@ -1017,6 +1028,7 @@ function Show-DeskZoneInstallWizard {
             $form.CancelButton = $finishButton
         }
         catch {
+            Write-Warning ($_ | Out-String)
             $status.Text = '安装失败，请检查安装目录后重试。'
             $status.Visible = $true
             $progress.Visible = $false
@@ -1215,6 +1227,7 @@ function Show-DeskZoneUninstallWizard {
             $form.CancelButton = $finishButton
         }
         catch {
+            Write-Warning ($_ | Out-String)
             $progress.Visible = $false
             $status.Text = '卸载未能完成，请重试。'
             $status.Visible = $true

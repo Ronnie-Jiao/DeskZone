@@ -2,189 +2,131 @@
 param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
+    [ValidateSet('win-x64')]
     [string]$RuntimeIdentifier = 'win-x64',
     [string]$OutputPath = '',
     [string]$InstallerPath = '',
-    [bool]$SelfContained = $true
+    [bool]$SelfContained = $true,
+    [string]$CompilerPath = ''
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-
 $installerRoot = $PSScriptRoot
 $repoRoot = Split-Path -Parent $installerRoot
-$publishScript = Join-Path $installerRoot 'Publish-DeskZone.ps1'
-$installScript = Join-Path $installerRoot 'Install-DeskZone.ps1'
-$installCommand = Join-Path $installerRoot 'Install-DeskZone.cmd'
-$iconAsset = Join-Path $repoRoot 'src\DeskZone.App\Assets\DeskZoneLogo.ico'
-$iconUpdaterScript = Join-Path $installerRoot 'Set-DeskZoneInstallerIcon.ps1'
-$logoAsset = Join-Path $installerRoot 'assets\DeskZoneLogoCompact.png'
-$folderIconAsset = Join-Path $installerRoot 'assets\InstallerFolderIcon.png'
-
-if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-    $OutputPath = Join-Path $installerRoot 'output\DeskZone'
-}
 if ([string]::IsNullOrWhiteSpace($InstallerPath)) {
-    $InstallerPath = Join-Path $installerRoot 'output\DeskZone-Setup.exe'
+    $InstallerPath = Join-Path $repoRoot "artifacts\windows-installer-$(Get-Date -Format yyyyMMdd-HHmmss)\DeskZone-Setup.exe"
 }
-
-$OutputPath = [IO.Path]::GetFullPath($OutputPath)
 $InstallerPath = [IO.Path]::GetFullPath($InstallerPath)
 $installerDirectory = Split-Path -Parent $InstallerPath
-$stagePath = Join-Path ([IO.Path]::GetTempPath()) "DeskZone-installer-stage-$PID-$(Get-Date -Format yyyyMMddHHmmss)"
-$sedPath = Join-Path ([IO.Path]::GetTempPath()) "DeskZone-installer-$PID.sed"
+if ([string]::IsNullOrWhiteSpace($OutputPath)) {
+    $OutputPath = Join-Path $installerDirectory 'publish'
+}
+$OutputPath = [IO.Path]::GetFullPath($OutputPath)
+$stagePath = Join-Path $installerDirectory 'package-source'
 
-if (-not (Test-Path -LiteralPath $publishScript -PathType Leaf)) {
-    throw "找不到发布脚本：$publishScript"
-}
-if (-not (Test-Path -LiteralPath $installScript -PathType Leaf)) {
-    throw "找不到安装脚本：$installScript"
-}
-if (-not (Test-Path -LiteralPath $installCommand -PathType Leaf)) {
-    throw "找不到安装入口：$installCommand"
-}
-if (-not (Test-Path -LiteralPath $iconUpdaterScript -PathType Leaf)) {
-    throw "找不到安装包图标处理脚本：$iconUpdaterScript"
-}
-foreach ($asset in @($iconAsset, $logoAsset, $folderIconAsset)) {
-    if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) {
-        throw "找不到安装器界面资源：$asset"
+# Refuse existing output so an old EXE cannot be mistaken for a successful build.
+foreach ($path in @($InstallerPath, $OutputPath, $stagePath)) {
+    if (Test-Path -LiteralPath $path) {
+        throw "输出已存在，请指定新的安装包/发布目录：$path"
     }
 }
-
-try {
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $publishScript `
-        -Configuration $Configuration `
-        -RuntimeIdentifier $RuntimeIdentifier `
-        -OutputPath $OutputPath `
-        -SelfContained ($(if ($SelfContained) { 'true' } else { 'false' }))
-    if ($LASTEXITCODE -ne 0) {
-        throw "发布运行包失败，退出码：$LASTEXITCODE"
-    }
-
-    $publishedExe = Join-Path $OutputPath 'DeskZone.exe'
-    if (-not (Test-Path -LiteralPath $publishedExe -PathType Leaf)) {
-        throw "发布目录中没有 DeskZone.exe：$publishedExe"
-    }
-
-    New-Item -ItemType Directory -Path $stagePath -Force | Out-Null
-    Copy-Item -LiteralPath $installScript -Destination (Join-Path $stagePath 'Install-DeskZone.ps1') -Force
-    Copy-Item -LiteralPath $installCommand -Destination (Join-Path $stagePath 'Install-DeskZone.cmd') -Force
-    Copy-Item -LiteralPath $iconAsset -Destination (Join-Path $stagePath 'DeskZoneLogo.ico') -Force
-    # IExpress 会把 SED 中的嵌套目录展开到解压根目录；资源放在根目录，
-    # 避免安装包运行时找不到安装器背景和图标。
-    Copy-Item -LiteralPath $logoAsset -Destination (Join-Path $stagePath 'DeskZoneLogoCompact.png') -Force
-    Copy-Item -LiteralPath $folderIconAsset -Destination (Join-Path $stagePath 'InstallerFolderIcon.png') -Force
-    Get-ChildItem -LiteralPath $OutputPath -Force -File | Copy-Item -Destination $stagePath -Force
-
-    # 有些 .NET 发布布局把 SQLite 原生库放在 runtimes 子目录，
-    # 另一些布局会将当前目标架构的原生库直接放在发布目录根部。
-    # 安装包只携带当前目标架构所需的文件，避免混入其它平台运行库。
-    $runtimeSourcePath = Join-Path $OutputPath (Join-Path 'runtimes' $RuntimeIdentifier)
-    if (Test-Path -LiteralPath $runtimeSourcePath -PathType Container) {
-        $runtimeStageRoot = Join-Path $stagePath 'runtimes'
-        New-Item -ItemType Directory -Path $runtimeStageRoot -Force | Out-Null
-        Copy-Item -LiteralPath $runtimeSourcePath -Destination $runtimeStageRoot -Recurse -Force
-    }
-
-    $nativeSqliteCandidates = @(
-        (Join-Path $stagePath 'e_sqlite3.dll'),
-        (Join-Path $stagePath (Join-Path (Join-Path 'runtimes' $RuntimeIdentifier) 'native\e_sqlite3.dll'))
+if ([string]::IsNullOrWhiteSpace($CompilerPath)) {
+    $compilerCandidates = @(
+        (Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'),
+        (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
+        (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
     )
-    if (-not ($nativeSqliteCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })) {
-        throw "安装包暂存目录中缺少 SQLite Windows 原生库；已检查：$($nativeSqliteCandidates -join '、')"
+    $compilerCommand = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+    if ($null -ne $compilerCommand) {
+        $compilerCandidates = @($compilerCommand.Source) + $compilerCandidates
     }
-
-    $files = @(Get-ChildItem -LiteralPath $stagePath -Force -File -Recurse | Sort-Object FullName)
-    if ($files.Count -eq 0) {
-        throw "安装包暂存目录为空：$stagePath"
-    }
-
-    $sedLines = [System.Collections.Generic.List[string]]::new()
-    $sedLines.Add('[Version]')
-    $sedLines.Add('Class=IEXPRESS')
-    $sedLines.Add('SEDVersion=3')
-    $sedLines.Add('[Options]')
-    $sedLines.Add('PackagePurpose=InstallApp')
-    $sedLines.Add('ShowInstallProgramWindow=1')
-    $sedLines.Add('HideExtractAnimation=1')
-    $sedLines.Add('UseLongFileName=1')
-    $sedLines.Add('InsideCompressed=1')
-    $sedLines.Add('CAB_FixedSize=0')
-    $sedLines.Add('CAB_ResvCodeSigning=0')
-    $sedLines.Add('RebootMode=N')
-    # 不显示 IExpress 外层确认框，直接进入自定义中文安装界面。
-    # 安装/更新策略由 Install-DeskZone.ps1 统一处理：已有安装沿用原目录，用户数据目录不删除。
-    $sedLines.Add('InstallPrompt=')
-    $sedLines.Add('DisplayLicense=')
-    $sedLines.Add('FinishMessage=')
-    $sedLines.Add('TargetName=%TargetName%')
-    $sedLines.Add('FriendlyName=%FriendlyName%')
-    $sedLines.Add('AppLaunched=cmd.exe /c Install-DeskZone.cmd')
-    $sedLines.Add('PostInstallCmd=<None>')
-    $sedLines.Add('AdminQuietInstCmd=')
-    $sedLines.Add('UserQuietInstCmd=')
-    $stringLines = [System.Collections.Generic.List[string]]::new()
-    $stringLines.Add('[Strings]')
-    $stringLines.Add(('TargetName={0}' -f $InstallerPath))
-    $stringLines.Add('FriendlyName=DeskZone 安装程序')
-
-    for ($index = 0; $index -lt $files.Count; $index++) {
-        $relativeName = $files[$index].FullName.Substring($stagePath.Length).TrimStart('\', '/')
-        $relativeName = $relativeName -replace '/', '\'
-        $stringLines.Add(('FILE{0}="{1}"' -f $index, $relativeName))
-    }
-
-    $sedLines.Add('SourceFiles=SourceFiles')
-    $sedLines.Add('[SourceFiles]')
-    $sedLines.Add("SourceFiles0=$stagePath\")
-    $sedLines.Add('[SourceFiles0]')
-    for ($index = 0; $index -lt $files.Count; $index++) {
-        $sedLines.Add("%FILE$index%=")
-    }
-    $sedLines.AddRange($stringLines)
-
-    $sedEncoding = [Text.Encoding]::GetEncoding([Globalization.CultureInfo]::CurrentUICulture.TextInfo.ANSICodePage)
-    [IO.File]::WriteAllText($sedPath, ($sedLines -join "`n"), $sedEncoding)
-
-    New-Item -ItemType Directory -Path $installerDirectory -Force | Out-Null
-    if (Test-Path -LiteralPath $InstallerPath) {
-        Remove-Item -LiteralPath $InstallerPath -Force
-    }
-
-    $iexpress = Join-Path $env:WINDIR 'System32\iexpress.exe'
-    if (-not (Test-Path -LiteralPath $iexpress -PathType Leaf)) {
-        throw "系统中找不到 IExpress：$iexpress"
-    }
-
-    $iexpressProcess = Start-Process -FilePath $iexpress `
-        -ArgumentList @('/N', '/Q', $sedPath) `
-        -Wait `
-        -PassThru
-    if ($iexpressProcess.ExitCode -ne 0) {
-        throw "IExpress 打包失败，退出码：$($iexpressProcess.ExitCode)"
-    }
-    if (-not (Test-Path -LiteralPath $InstallerPath -PathType Leaf)) {
-        throw "IExpress 未生成安装包：$InstallerPath"
-    }
-
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $iconUpdaterScript `
-        -ExecutablePath $InstallerPath `
-        -IconPath $iconAsset
-    if ($LASTEXITCODE -ne 0) {
-        throw "安装包图标处理失败，退出码：$LASTEXITCODE"
-    }
-
-    $sizeMb = [Math]::Round((Get-Item -LiteralPath $InstallerPath).Length / 1MB, 1)
-    Write-Host ('DeskZone 安装包已生成：{0}（{1} MB）' -f $InstallerPath, $sizeMb)
+    $CompilerPath = $compilerCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
 }
-finally {
-    if ($env:DESKZONE_KEEP_INSTALLER_DEBUG -ne '1') {
-        if (Test-Path -LiteralPath $stagePath) {
-            Remove-Item -LiteralPath $stagePath -Recurse -Force
-        }
-        if (Test-Path -LiteralPath $sedPath) {
-            Remove-Item -LiteralPath $sedPath -Force
-        }
+if ([string]::IsNullOrWhiteSpace($CompilerPath) -or -not (Test-Path -LiteralPath $CompilerPath -PathType Leaf)) {
+    throw '找不到已安装的 Inno Setup 6 编译器。可通过 -CompilerPath 指定 ISCC.exe；本脚本不会联网安装工具。'
+}
+$CompilerPath = [IO.Path]::GetFullPath($CompilerPath)
+$definitionPath = Join-Path $installerRoot 'DeskZone.iss'
+$iconAsset = Join-Path $repoRoot 'src\DeskZone.App\Assets\DeskZoneLogo.ico'
+$packageSources = @{
+    'Install-DeskZone.ps1' = (Join-Path $installerRoot 'Install-DeskZone.ps1')
+    'Start-DeskZoneInstaller.ps1' = (Join-Path $installerRoot 'Start-DeskZoneInstaller.ps1')
+    'Install-DeskZone.cmd' = (Join-Path $installerRoot 'Install-DeskZone.cmd')
+    'DeskZoneLogo.ico' = $iconAsset
+    'DeskZoneLogoCompact.png' = (Join-Path $installerRoot 'assets\DeskZoneLogoCompact.png')
+    'InstallerFolderIcon.png' = (Join-Path $installerRoot 'assets\InstallerFolderIcon.png')
+}
+foreach ($path in @($definitionPath) + @($packageSources.Values)) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "找不到安装包源文件：$path"
     }
 }
+
+& (Join-Path $installerRoot 'Publish-DeskZone.ps1') -Configuration $Configuration `
+    -RuntimeIdentifier $RuntimeIdentifier -OutputPath $OutputPath `
+    -SelfContained ($(if ($SelfContained) { 'true' } else { 'false' }))
+
+$nativeSqliteCandidates = @(
+    (Join-Path $OutputPath 'e_sqlite3.dll'),
+    (Join-Path $OutputPath "runtimes\$RuntimeIdentifier\native\e_sqlite3.dll")
+)
+if (-not ($nativeSqliteCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })) {
+    throw '发布目录中缺少 SQLite Windows 原生库。'
+}
+New-Item -ItemType Directory -Path $stagePath | Out-Null
+foreach ($name in $packageSources.Keys) {
+    if (Test-Path -LiteralPath (Join-Path $OutputPath $name)) {
+        throw "安装器文件与发布文件重名：$name"
+    }
+    Copy-Item -LiteralPath $packageSources[$name] -Destination (Join-Path $stagePath $name)
+}
+
+# Preserve nested runtime/localization files, with a hashed inventory.
+$manifest = @(
+    foreach ($root in @($OutputPath, $stagePath)) {
+        foreach ($file in Get-ChildItem -LiteralPath $root -Recurse -File -Force | Sort-Object FullName) {
+            [PSCustomObject]@{
+                Path = $file.FullName.Substring($root.Length).TrimStart('\', '/')
+                Length = $file.Length
+                SHA256 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+            }
+        }
+    }
+)
+$manifest | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $installerDirectory 'package-manifest.json') -Encoding UTF8
+$compilerArguments = @(
+    "/DPublishSource=$OutputPath",
+    "/DInstallerSource=$stagePath",
+    "/DIconFile=$iconAsset",
+    "/O$installerDirectory",
+    "/F$([IO.Path]::GetFileNameWithoutExtension($InstallerPath))",
+    $definitionPath
+)
+$compilerOutput = & $CompilerPath @compilerArguments 2>&1
+$compilerExitCode = $LASTEXITCODE
+$compilerOutput | Set-Content -LiteralPath (Join-Path $installerDirectory 'compiler.log') -Encoding UTF8
+$compilerOutput | Select-Object -Last 6 | ForEach-Object { Write-Host $_ }
+if ($compilerExitCode -ne 0) {
+    throw "Inno Setup 编译失败，退出码：$compilerExitCode。请查看 compiler.log；不要交付残留 EXE。"
+}
+if (-not (Test-Path -LiteralPath $InstallerPath -PathType Leaf) -or (Get-Item -LiteralPath $InstallerPath).Length -eq 0) {
+    throw "Inno Setup 未生成有效输出：$InstallerPath"
+}
+
+# Embed the icon during compilation; never rewrite a completed SFX's resources.
+$installerFile = Get-Item -LiteralPath $InstallerPath
+$compilerVersion = [regex]::Match(($compilerOutput -join "`n"), 'Compiler engine version: Inno Setup ([^\r\n]+)').Groups[1].Value
+[PSCustomObject]@{
+    Installer = $InstallerPath
+    Length = $installerFile.Length
+    SHA256 = (Get-FileHash -LiteralPath $InstallerPath -Algorithm SHA256).Hash
+    PayloadFiles = $manifest.Count
+    Compiler = $CompilerPath
+    CompilerVersion = $compilerVersion
+    Configuration = $Configuration
+    RuntimeIdentifier = $RuntimeIdentifier
+    SelfContained = $SelfContained
+    InstallerDefinitionSHA256 = (Get-FileHash -LiteralPath $definitionPath -Algorithm SHA256).Hash
+} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $installerDirectory 'build-receipt.json') -Encoding UTF8
+Write-Host "DeskZone 安装包已生成：$InstallerPath（$($installerFile.Length) 字节，$($manifest.Count) 个文件）"
