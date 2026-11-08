@@ -1,8 +1,11 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -37,6 +40,9 @@ namespace DeskZone.App;
 
 public partial class MainWindow : Window
 {
+    private static readonly HttpClient UpdateHttpClient = new() { Timeout = TimeSpan.FromSeconds(15) };
+    private static readonly Uri UpdateManifestUri = new("http://106.55.34.191/deskzone/manifest.json");
+    private UpdateManifest? _availableUpdate;
     private static readonly Guid PanelId = Guid.Parse("8577142a-f767-41df-b3a2-5b07410f9181");
     private const double StablePanelOpacity = 1.0;
     private const string InternalItemDataFormat = "DeskZone.ItemId";
@@ -143,6 +149,7 @@ public partial class MainWindow : Window
     private ItemNameInputWindow? _itemNameInputWindow;
     private ItemNameInputWindow? _recentItemsDisplayLimitInputWindow;
     private TextBox? _editingRecentItemsDisplayLimitTextBox;
+    private TextBox? _recentItemsDisplayLimitMouseEditCandidate;
 
     private bool _applyingLayout;
     private bool _allowClose;
@@ -1079,28 +1086,31 @@ public partial class MainWindow : Window
     private void CategoryHeader_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         _categoryShiftClick = false;
+        _recentItemsDisplayLimitMouseEditCandidate = null;
 
         if (sender is not FrameworkElement header || header.Tag is not CategoryViewModel category)
         {
             return;
         }
 
-        var source = e.OriginalSource as DependencyObject;
-        var textBox = FindAncestor<TextBox>(source);
-        if (IsRecentItemsDisplayLimitTextBox(textBox))
+        var displayLimitTextBox = GetRecentItemsDisplayLimitAtPointer(header, e);
+        if (displayLimitTextBox is not null)
         {
             _categoryDragCandidate = null;
             _categoryShiftClick = false;
             CancelPendingCategoryToggle();
             if (e.ClickCount >= 2)
             {
-                BeginRecentItemsDisplayLimitEdit(textBox!);
+                _recentItemsDisplayLimitMouseEditCandidate = displayLimitTextBox;
             }
 
+            displayLimitTextBox.Focus();
             e.Handled = true;
             return;
         }
 
+        var source = e.OriginalSource as DependencyObject;
+        var textBox = FindAncestor<TextBox>(source);
         if (FindAncestor<Button>(source) is not null || textBox is not null && !textBox.IsReadOnly)
         {
             return;
@@ -1113,12 +1123,30 @@ public partial class MainWindow : Window
 
     private async void CategoryHeader_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
-        var source = e.OriginalSource as DependencyObject;
-        if (IsRecentItemsDisplayLimitTextBox(FindAncestor<TextBox>(source)))
+        var editCandidate = _recentItemsDisplayLimitMouseEditCandidate;
+        _recentItemsDisplayLimitMouseEditCandidate = null;
+        var displayLimitTextBox = sender is FrameworkElement header
+            ? GetRecentItemsDisplayLimitAtPointer(header, e)
+            : null;
+        if (displayLimitTextBox is not null)
         {
             _categoryDragCandidate = null;
             _categoryShiftClick = false;
+            CancelPendingCategoryToggle();
             e.Handled = true;
+            if (ReferenceEquals(editCandidate, displayLimitTextBox))
+            {
+                // Finish the native mouse-up before hiding its target and activating
+                // the input window, otherwise the release can take focus back.
+                _ = Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+                {
+                    if (displayLimitTextBox.IsLoaded && displayLimitTextBox.IsVisible)
+                    {
+                        BeginRecentItemsDisplayLimitEdit(displayLimitTextBox);
+                    }
+                }));
+            }
+
             return;
         }
 
@@ -1132,6 +1160,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        var source = e.OriginalSource as DependencyObject;
         var textBox = FindAncestor<TextBox>(source);
         if (FindAncestor<Button>(source) is not null || textBox is not null && !textBox.IsReadOnly)
         {
@@ -1200,13 +1229,40 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
-    private static bool IsRecentItemsDisplayLimitTextBox(TextBox? textBox)
+    private static TextBox? GetRecentItemsDisplayLimitAtPointer(FrameworkElement header, MouseEventArgs e)
     {
-        return textBox?.Uid == "RecentItemsDisplayLimit";
+        if (header.Tag is not CategoryViewModel { IsRecentlyOpened: true })
+        {
+            return null;
+        }
+
+        var textBox = FindVisualDescendant<TextBox>(header, candidate => candidate.Uid == "RecentItemsDisplayLimit");
+        if (textBox is null || !textBox.IsVisible)
+        {
+            return null;
+        }
+
+        // Test the whole count cell, including its blank padding and template
+        // visuals, rather than depending on the type of OriginalSource.
+        return new Rect(textBox.RenderSize).Contains(e.GetPosition(textBox)) ? textBox : null;
+    }
+
+    private void RecentItemsDisplayLimit_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (sender is TextBox textBox && e.Key is Key.Enter or Key.Space or Key.F2)
+        {
+            e.Handled = true;
+            BeginRecentItemsDisplayLimitEdit(textBox);
+        }
     }
 
     private void BeginRecentItemsDisplayLimitEdit(TextBox textBox)
     {
+        if (_editingRecentItemsDisplayLimitTextBox is not null)
+        {
+            return;
+        }
+
         CancelPendingCategoryToggle();
         _categoryDragCandidate = null;
         _categoryShiftClick = false;
@@ -1219,6 +1275,15 @@ public partial class MainWindow : Window
                 _ = CompleteRecentItemsDisplayLimitEditAsync();
             _recentItemsDisplayLimitInputWindow.CancelRequested += (_, _) =>
                 _ = CompleteRecentItemsDisplayLimitEditAsync(cancel: true);
+            _recentItemsDisplayLimitInputWindow.InputBox.LostKeyboardFocus += (_, _) =>
+                Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+                {
+                    if (_recentItemsDisplayLimitInputWindow is { IsVisible: true } input &&
+                        !input.InputBox.IsKeyboardFocusWithin)
+                    {
+                        _ = CompleteRecentItemsDisplayLimitEditAsync();
+                    }
+                }));
         }
 
         var inputWindow = _recentItemsDisplayLimitInputWindow;
@@ -1231,6 +1296,8 @@ public partial class MainWindow : Window
         inputWindow.InputBorder.Background = (Brush)FindResource("FileItemSurfaceBrush");
         inputWindow.InputBox.Text = _viewModel.RecentItemsDisplayLimit.ToString();
         inputWindow.InputBox.ToolTip = "1–30；Enter 保存，Esc 取消";
+        System.Windows.Automation.AutomationProperties.SetName(inputWindow.InputBox, "最近打开项数");
+        System.Windows.Automation.AutomationProperties.SetHelpText(inputWindow.InputBox, "1–30；Enter 或失去焦点保存，Esc 取消");
         textBox.Visibility = Visibility.Hidden;
 
         if (!inputWindow.IsVisible)
@@ -2050,7 +2117,8 @@ public partial class MainWindow : Window
 
         try
         {
-            var preserveOriginals = await MoveDroppedPathsWithDuplicatePromptAsync(category, paths);
+            var insertionFollowers = isHeaderDrop ? null : GetDropInsertionFollowers(border, category, e);
+            var preserveOriginals = await MoveDroppedPathsWithDuplicatePromptAsync(category, paths, insertionFollowers);
             e.Effects = preserveOriginals ? DragDropEffects.Copy : DragDropEffects.Move;
         }
         catch (Exception ex)
@@ -2060,9 +2128,46 @@ public partial class MainWindow : Window
         }
     }
 
+    // Capture the full-order suffix before any move reloads the category. Filtered
+    // grids still map their visible cards back to the underlying category order.
+    private static Guid[] GetDropInsertionFollowers(Border border, CategoryViewModel category, DragEventArgs e)
+    {
+        var grid = FindVisualDescendant<ItemsControl>(border, control =>
+            ReferenceEquals(control.DataContext, category) && ReferenceEquals(control.ItemsSource, category.VisibleItems));
+        var insertionIndex = category.Items.Count;
+        if (grid is not null && grid.IsVisible)
+        {
+            var point = e.GetPosition(grid);
+            foreach (var item in category.VisibleItems)
+            {
+                if (grid.ItemContainerGenerator.ContainerFromItem(item) is not FrameworkElement container)
+                {
+                    continue;
+                }
+
+                var bounds = container.TransformToAncestor(grid).TransformBounds(new Rect(container.RenderSize));
+                if (point.Y < bounds.Top || (point.Y <= bounds.Bottom && point.X < bounds.Left + bounds.Width / 2))
+                {
+                    insertionIndex = category.Items.IndexOf(item);
+                    break;
+                }
+            }
+
+            // After the last visible card, insert immediately after it, even
+            // when a search has hidden later items in the underlying order.
+            if (insertionIndex == category.Items.Count && category.VisibleItems.Count > 0)
+            {
+                insertionIndex = category.Items.IndexOf(category.VisibleItems[^1]) + 1;
+            }
+        }
+
+        return category.Items.Skip(insertionIndex).Select(item => item.Id).ToArray();
+    }
+
     private async Task<bool> MoveDroppedPathsWithDuplicatePromptAsync(
         CategoryViewModel category,
-        IEnumerable<string> paths)
+        IEnumerable<string> paths,
+        Guid[]? insertionFollowers)
     {
         var uniquePaths = paths
             .Where(path => !string.IsNullOrWhiteSpace(path))
@@ -2087,8 +2192,13 @@ public partial class MainWindow : Window
         }
 
         var preserveOriginals = false;
+        var movedIds = new List<Guid>();
+        var categoryId = category.Id;
         foreach (var path in uniquePaths)
         {
+            // Move and replacement reload the view model, so never retain a
+            // category instance from a previous iteration.
+            category = _viewModel.Categories.First(item => item.Id == categoryId);
             if (replacements.TryGetValue(path, out var existingItemId))
             {
                 var existingItem = category.Items.FirstOrDefault(item => item.Id == existingItemId);
@@ -2110,6 +2220,41 @@ public partial class MainWindow : Window
             if (result.Failures.Count > 0)
             {
                 preserveOriginals = true;
+            }
+            else if (result.Moved > 0 && insertionFollowers is not null)
+            {
+                var currentCategory = _viewModel.Categories.First(item => item.Id == categoryId);
+                var movedItem = currentCategory.Items.FirstOrDefault(item =>
+                    string.Equals(item.Model.OriginalPath, Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase));
+                if (movedItem is not null)
+                {
+                    movedIds.Add(movedItem.Id);
+                }
+            }
+        }
+
+        if (insertionFollowers is not null && movedIds.Count > 0)
+        {
+            category = _viewModel.Categories.First(item => item.Id == categoryId);
+            var movedSet = movedIds.ToHashSet();
+            var anchorId = insertionFollowers.FirstOrDefault(id => !movedSet.Contains(id) &&
+                category.Items.Any(item => item.Id == id));
+            try
+            {
+                foreach (var movedId in movedIds)
+                {
+                    var sourceIndex = category.Items.ToList().FindIndex(item => item.Id == movedId);
+                    var anchorIndex = category.Items.ToList().FindIndex(item => item.Id == anchorId);
+                    var targetIndex = anchorIndex < 0 ? category.Items.Count - 1 :
+                        anchorIndex - (sourceIndex < anchorIndex ? 1 : 0);
+                    await _viewModel.ReorderItemsAsync(category, sourceIndex, targetIndex);
+                }
+            }
+            catch (Exception ex)
+            {
+                // Files are already moved; the reorder method restores the last
+                // persisted order on failure. Do not report the move as undone.
+                ShowError("文件已移动，但调整项目顺序失败", ex);
             }
         }
 
@@ -2561,6 +2706,7 @@ public partial class MainWindow : Window
         ApplyAppearance(_transparentMode);
         SettingsOverlay.Visibility = Visibility.Visible;
         SyncSettingsControls();
+        AboutVersionText.Text = $"桌序 DeskZone {GetCurrentVersion()}";
     }
 
     private void SettingsOverlay_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -2578,6 +2724,81 @@ public partial class MainWindow : Window
 
     private void SettingsClose_Click(object sender, RoutedEventArgs e) =>
         SettingsOverlay.Visibility = Visibility.Collapsed;
+
+    private async void CheckUpdates_Click(object sender, RoutedEventArgs e)
+    {
+        CheckUpdatesButton.IsEnabled = false;
+        DownloadUpdateButton.Visibility = Visibility.Collapsed;
+        UpdateStatusText.Text = "正在检查…";
+        try
+        {
+            using var response = await UpdateHttpClient.GetAsync(UpdateManifestUri);
+            response.EnsureSuccessStatusCode();
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            var manifest = await JsonSerializer.DeserializeAsync<UpdateManifest>(stream,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (manifest is null || !Version.TryParse(manifest.Version, out var remoteVersion) ||
+                !Uri.TryCreate(manifest.DownloadUrl, UriKind.Absolute, out var downloadUri) ||
+                downloadUri.Scheme is not ("http" or "https") ||
+                string.IsNullOrWhiteSpace(manifest.Sha256) || manifest.Sha256.Length != 64)
+            {
+                throw new InvalidDataException("更新清单格式无效。");
+            }
+
+            manifest.DownloadUrl = downloadUri.AbsoluteUri;
+            var currentVersion = Version.Parse(GetCurrentVersion());
+            if (remoteVersion > currentVersion)
+            {
+                _availableUpdate = manifest;
+                UpdateStatusText.Text = $"发现新版本 {remoteVersion}：{manifest.Notes}";
+                DownloadUpdateButton.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                _availableUpdate = null;
+                UpdateStatusText.Text = $"已是最新版本（{currentVersion}）";
+            }
+        }
+        catch (Exception ex)
+        {
+            _availableUpdate = null;
+            UpdateStatusText.Text = $"检查失败：{ex.Message}";
+        }
+        finally
+        {
+            CheckUpdatesButton.IsEnabled = true;
+        }
+    }
+
+    private void DownloadUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        if (_availableUpdate is null)
+        {
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(_availableUpdate.DownloadUrl) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            UpdateStatusText.Text = $"打开下载入口失败：{ex.Message}";
+        }
+    }
+
+    private static string GetCurrentVersion() =>
+        Assembly.GetEntryAssembly()?.GetName().Version is { } version
+            ? $"{version.Major}.{version.Minor}.{Math.Max(version.Build, 0)}"
+            : "1.1.0";
+
+    private sealed class UpdateManifest
+    {
+        public string Version { get; set; } = string.Empty;
+        public string DownloadUrl { get; set; } = string.Empty;
+        public string Sha256 { get; set; } = string.Empty;
+        public string Notes { get; set; } = string.Empty;
+    }
 
     private void SettingsLockPosition_Click(object sender, RoutedEventArgs e)
     {

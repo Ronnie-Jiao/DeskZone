@@ -627,9 +627,14 @@
                                                          CaretBrush="{DynamicResource ActionBrush}"
                                                          FontSize="11"
                                                          IsReadOnly="True"
+                                                         IsReadOnlyCaretVisible="False"
+                                                         IsTabStop="True"
                                                          Cursor="Arrow"
                                                          Uid="RecentItemsDisplayLimit"
-                                                         ToolTip="双击修改显示数量（1–30）"
+                                                         AutomationProperties.Name="最近打开项数"
+                                                         AutomationProperties.HelpText="1–30；双击或按 Enter、空格、F2 编辑"
+                                                         ToolTip="双击或按 Enter、空格、F2 修改显示数量（1–30）"
+                                                         PreviewKeyDown="RecentItemsDisplayLimit_PreviewKeyDown"
                                                          Text="{Binding DataContext.RecentItemsDisplayLimit,
                                                                        RelativeSource={RelativeSource AncestorType={x:Type Window}},
                                                                        Mode=OneWay}">
@@ -972,6 +977,43 @@
                                         Cursor="Hand"
                                         Content="恢复窗口大小"
                                         Click="SettingsRestoreSize_Click" />
+
+                                <TextBlock Margin="0,14,0,7"
+                                           FontSize="11"
+                                           FontWeight="SemiBold"
+                                           Foreground="{StaticResource MutedBrush}"
+                                           Text="关于" />
+                                <TextBlock x:Name="AboutVersionText"
+                                           Margin="0,0,0,4"
+                                           Foreground="{StaticResource TextBrush}" />
+                                <TextBlock Margin="0,0,0,8"
+                                           Foreground="{StaticResource MutedBrush}"
+                                           Text="开发者：DeskZone 项目组" />
+                                <StackPanel Orientation="Horizontal">
+                                    <Button x:Name="CheckUpdatesButton"
+                                            Padding="9,5"
+                                            Margin="0,0,8,0"
+                                            Background="{DynamicResource SettingsActionSurfaceBrush}"
+                                            BorderBrush="{DynamicResource SettingsActionBorderBrush}"
+                                            Foreground="{StaticResource BrandBrush}"
+                                            Cursor="Hand"
+                                            Content="检查更新"
+                                            Click="CheckUpdates_Click" />
+                                    <Button x:Name="DownloadUpdateButton"
+                                            Padding="9,5"
+                                            Background="{DynamicResource SettingsActionSurfaceBrush}"
+                                            BorderBrush="{DynamicResource SettingsActionBorderBrush}"
+                                            Foreground="{StaticResource BrandBrush}"
+                                            Cursor="Hand"
+                                            Content="下载更新"
+                                            Visibility="Collapsed"
+                                            Click="DownloadUpdate_Click" />
+                                </StackPanel>
+                                <TextBlock x:Name="UpdateStatusText"
+                                           Margin="0,7,0,0"
+                                           TextWrapping="Wrap"
+                                           Foreground="{StaticResource MutedBrush}"
+                                           Text="尚未检查更新" />
                             </StackPanel>
                         </ScrollViewer>
 

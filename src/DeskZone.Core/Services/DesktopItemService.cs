@@ -253,7 +253,7 @@ public sealed class DesktopItemService : IDesktopItemService
             try
             {
                 Directory.CreateDirectory(targetDirectory);
-                targetPath = GetUniqueDestinationPath(targetDirectory, displayName, itemType.Value == DesktopItemType.Folder);
+                targetPath = GetDestinationPath(targetDirectory, displayName);
                 MovePath(fullPath, targetPath);
                 movedOnDisk = true;
 
@@ -361,7 +361,7 @@ public sealed class DesktopItemService : IDesktopItemService
 
         var targetPath = existing.ItemMode == DesktopItemMode.Managed
             ? NormalizePath(existing.ActivePath)
-            : GetUniqueDestinationPath(targetDirectory, GetDisplayName(fullPath), isDirectory: false);
+            : GetDestinationPath(targetDirectory, GetDisplayName(fullPath));
         if (!IsInsideDirectory(targetPath, targetDirectory))
         {
             throw new DeskZoneValidationException("现有程序入口的收纳路径无效，无法安全替换。");
@@ -531,7 +531,7 @@ public sealed class DesktopItemService : IDesktopItemService
         var samePath = PathsEqual(sourcePath, targetPath);
         if (sourceExists && !samePath && PathExists(targetPath))
         {
-            targetPath = GetUniqueDestinationPath(destinationRoot, sourceName, item.ItemType == DesktopItemType.Folder);
+            throw new IOException($"桌面上已存在同名项目“{sourceName}”，为避免覆盖或改名，未移动该项目。请先处理现有项目后重试。");
         }
 
         var movedOnDisk = false;
@@ -807,26 +807,15 @@ public sealed class DesktopItemService : IDesktopItemService
                normalizedPath.StartsWith(normalizedDirectory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string GetUniqueDestinationPath(string directory, string displayName, bool isDirectory)
+    private static string GetDestinationPath(string directory, string displayName)
     {
         var candidate = Path.Combine(directory, displayName);
-        if (!PathExists(candidate))
+        if (PathExists(candidate))
         {
-            return candidate;
+            throw new IOException($"目标目录中已存在同名项目“{displayName}”，为避免覆盖或自动改名，未移动该项目。");
         }
 
-        var stem = isDirectory ? displayName : Path.GetFileNameWithoutExtension(displayName);
-        var extension = isDirectory ? string.Empty : Path.GetExtension(displayName);
-        for (var index = 2; index < 10000; index++)
-        {
-            candidate = Path.Combine(directory, $"{stem} ({index}){extension}");
-            if (!PathExists(candidate))
-            {
-                return candidate;
-            }
-        }
-
-        throw new IOException($"目标目录中已经存在太多同名项目：{displayName}");
+        return candidate;
     }
 
     private static void MovePath(string sourcePath, string destinationPath)
