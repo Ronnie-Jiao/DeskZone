@@ -31,6 +31,7 @@ public sealed class WorkspaceViewModel : BindableBase
     private bool _isBusy;
     private WorkspaceDisplayMode _displayMode = WorkspaceDisplayMode.Custom;
     private int _recentItemsDisplayLimit = DefaultRecentItemsDisplayLimit;
+    private bool _showFileExtensions;
 
     public WorkspaceViewModel(
         LocalBackend backend,
@@ -67,6 +68,20 @@ public sealed class WorkspaceViewModel : BindableBase
 
     public bool IsCustomMode => DisplayMode == WorkspaceDisplayMode.Custom;
     public bool IsSmartMode => DisplayMode == WorkspaceDisplayMode.Smart;
+
+    public void SetShowFileExtensions(bool showFileExtensions)
+    {
+        if (_showFileExtensions == showFileExtensions)
+        {
+            return;
+        }
+
+        _showFileExtensions = showFileExtensions;
+        foreach (var category in Categories.Concat(SmartCategories))
+        {
+            category.SetShowFileExtensions(showFileExtensions);
+        }
+    }
 
     public int RecentItemsDisplayLimit
     {
@@ -218,7 +233,7 @@ public sealed class WorkspaceViewModel : BindableBase
         }
 
         var category = await _backend.Categories.CreateAsync("新分类", "#126FF7", cancellationToken);
-        var viewModel = new CategoryViewModel(category, Array.Empty<DesktopItem>());
+        var viewModel = new CategoryViewModel(category, Array.Empty<DesktopItem>(), _showFileExtensions);
         Categories.Add(viewModel);
         ApplySearchFilter();
         StatusMessage = "已创建“新分类”，可以直接修改名称。";
@@ -267,7 +282,7 @@ public sealed class WorkspaceViewModel : BindableBase
         try
         {
             var category = await _backend.Categories.CreateAsync(directory.Name, "#126FF7", cancellationToken);
-            var viewModel = new CategoryViewModel(category, Array.Empty<DesktopItem>());
+            var viewModel = new CategoryViewModel(category, Array.Empty<DesktopItem>(), _showFileExtensions);
             Categories.Add(viewModel);
             ApplySearchFilter();
 
@@ -312,7 +327,7 @@ public sealed class WorkspaceViewModel : BindableBase
         CancellationToken cancellationToken = default)
     {
         var trimmed = displayName.Trim();
-        if (string.Equals(trimmed, item.PersistedName, StringComparison.Ordinal))
+        if (string.Equals(trimmed, item.Name, StringComparison.Ordinal))
         {
             return;
         }
@@ -966,7 +981,7 @@ public sealed class WorkspaceViewModel : BindableBase
             var items = category.IsRecentlyOpened
                 ? await GetRecentlyOpenedDesktopItemsAsync(category.Id, cancellationToken)
                 : await _backend.Items.ListByCategoryAsync(category.Id, cancellationToken);
-            Categories.Add(new CategoryViewModel(category, items));
+            Categories.Add(new CategoryViewModel(category, items, _showFileExtensions));
         }
 
         if (IsSmartMode)
@@ -1060,7 +1075,7 @@ public sealed class WorkspaceViewModel : BindableBase
                 definition.Key,
                 now,
                 now);
-            smartCategories.Add(new CategoryViewModel(category, items));
+            smartCategories.Add(new CategoryViewModel(category, items, _showFileExtensions));
         }
 
         SmartCategories.Clear();

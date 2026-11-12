@@ -7,9 +7,11 @@
 ## 目录
 
 - [项目定位](#项目定位)
+- [AI 快速上手](#ai-快速上手)
 - [当前功能](#当前功能)
 - [用户界面与操作](#用户界面与操作)
 - [项目结构](#项目结构)
+- [功能到源码索引](#功能到源码索引)
 - [运行机制](#运行机制)
 - [本地数据](#本地数据)
 - [安装、升级与数据保留](#安装升级与数据保留)
@@ -31,6 +33,27 @@ DeskZone 是一个 Windows 优先、纯本地运行的桌面整理组件。它�
 - 以引用方式显示的项目保留原位；用户将文件拖入分类时会按剪切移动收纳到 DeskZone 管理目录。
 
 核心原则：本地优先、文件安全、轻量常驻、可恢复。
+
+## AI 快速上手
+
+### 开始任务时
+
+1. 先阅读仓库根目录 `AGENTS.md`，再看 [`修改记录.md`](修改记录.md) 顶部最新记录。
+2. 按任务阅读本 Wiki 的相关章节；涉及具体行为时，继续检查“功能到源码索引”里的当前源码。
+3. 查看 `git status --short` 和相关差异，保留已有改动，不要用还原或清理命令覆盖用户工作。
+
+### 信息以什么为准
+
+- 当前任务中的用户要求决定本次目标；当前源码用于确认已经实现的行为；本 Wiki 说明产品规则与安全语义。
+- `docs/修改记录.md` 是按时间追加的历史记录，可能描述后来又变更过的状态。若记录、README 或 Wiki 与源码不一致，先核对源码和近期改动，不要直接照搬旧描述；发现仍有文档过时，应在相关任务中修正。
+- `prototype/hatchable/` 是交互原型，不是正式客户端。`bin/`、`obj/`、`artifacts/` 和安装目录是构建或部署产物，不是源码修改入口。
+
+### 修改与验证边界
+
+- 产品代码只改当前仓库源码；完成每项代码或文档修改后，在修改记录顶部追加时间、文件和实际验证结果。
+- 本项目是 Windows 桌面应用。未收到明确要求时，只做完成开发所需的构建、编译或静态检查；不运行测试、不启动客户端或做手工 UI 验收。构建不代表功能或 UI 已验收。
+- 未获得本次任务明确授权时，不生成发行包、不安装、不发布。
+- 若任务开始前“DeskZone 实时预览”已打开，而编辑、热重载或重建将其关闭，任务完成前应等待监视器恢复；仍未打开时自动重启预览，并说明无法恢复的原因。详见“开发与构建”。
 
 ## 项目资料与凭据
 
@@ -68,7 +91,7 @@ DeskZone 是一个 Windows 优先、纯本地运行的桌面整理组件。它�
 - 支持文件、文件夹和 Windows 快捷方式（`.lnk`）的路径引用或本地托管。
 - 双击通过 Windows Shell 打开对象。
 - 文件、文件夹和快捷方式的显示名称支持双击修改；修改只保存 DeskZone 的显示名称，不修改磁盘上的真实文件名或快捷方式路径。
-- 文件对象只显示图标和名称，不显示独立的小卡片底色或描边。
+- 文件对象默认只显示图标和名称，不显示独立的小卡片底色或描边；选中时显示半透明白色圆角底色，不加描边。
 - 文件卡片按当前可用宽度保持统一列宽，并从左向右填满每一行后再换行；末行不足的项目靠左显示，不会被拉伸到整行或居中。
 - 单击文件对象会选中它；`Ctrl+C` / `Ctrl+X` 会把真实文件、文件夹或快捷方式放入 Windows 文件剪贴板，可粘贴到资源管理器等位置。按 `Delete` 会按 Windows Shell 操作移入回收站；对象右键仍使用 Windows 原生菜单。
 - 仅从 DeskZone 移除引用不会删除真实文件；按 `Delete` 或在 Windows 原生菜单中选择删除则会移入回收站，并同步清理 DeskZone 项目和最近打开记录。
@@ -86,14 +109,15 @@ DeskZone 是一个 Windows 优先、纯本地运行的桌面整理组件。它�
 设置入口提供以下配置：
 
 - 锁定或解锁面板位置与大小。
-- 关闭时保留到通知区域。
-- 开机自动启动：登录 Windows 后自动运行 DeskZone，并作为桌面组件显示。
+- 文件和快捷方式名称默认隐藏后缀。ViewModel 有可切换后缀显示的逻辑，但当前 WPF 设置界面没有对应开关或持久化入口；在界面和设置存储接通前，不要把它描述为用户可配置功能。文件夹名称保持原样。
+- 关闭保留通知区域。
+- 系统开机自动启动：登录 Windows 后自动运行 DeskZone，并作为桌面组件显示。
 - 切换透明显示 / 白色正常显示。
 - 打开本地数据目录。
 - “导出”会在选定位置下创建带时间标记的文件夹，每个自定义分类对应一个同名文件夹，并复制分类中的文件、文件夹和快捷方式；源项目不会移动或覆盖，重名项目会自动加序号。最近打开等系统分类不重复导出。
 - “备份”会生成 DeskZone 数据包（分类、快捷方式引用、布局、最近打开记录和应用设置）；“导入”用于恢复该数据包，导入前会自动备份当前数据，并兼容此前版本生成的 `.deskzone.zip` / ZIP 备份包。
 - 恢复面板尺寸。
-- 关于区域显示客户端版本和开发者“DeskZone 项目组”；“检查更新”读取官方发布清单，显示最新版本或可用更新，并提供安装包下载入口。
+- 关于区域显示客户端版本和开发者“DeskZone 项目组”；“检查更新”读取官方发布清单，显示已是最新或发现新版本，并提供安装包下载入口；检查失败时不显示错误文本。
 
 ## 用户界面与操作
 
@@ -139,6 +163,22 @@ DeskZone/
 - `DeskZone.Shell`：处理 Windows 窗口宿主、Explorer / Shell 行为和系统打开。
 - `DeskZone.Storage`：处理 SQLite、JSON 设置、数据库迁移、本地备份和路径。
 - `DeskZone.Rules`：为后续自动分类能力保留边界。
+
+## 功能到源码索引
+
+| 任务或行为 | 建议先看的文件 |
+| --- | --- |
+| 主窗口、设置弹窗、卡片布局和 XAML 事件绑定 | `src/DeskZone.App/MainWindow.xaml`、`MainWindow.xaml.cs` |
+| 分类、搜索、最近打开、自定义/智能模式的界面状态 | `src/DeskZone.App/ViewModels/WorkspaceViewModel.cs`、`CategoryViewModel.cs` |
+| 文件卡片显示名称、选中态和图标数据 | `src/DeskZone.App/ViewModels/DesktopItemViewModel.cs`、`src/DeskZone.App/MainWindow.xaml` |
+| 智能分组与桌面项目识别/导入 | `src/DeskZone.App/SmartGroupingService.cs`、`SmartImportService.cs`、`WorkspaceViewModel.cs` |
+| 文件引用、名称、收纳移动和冲突语义 | `src/DeskZone.Core/Services/DesktopItemService.cs`；UI 事件入口在 `MainWindow.xaml.cs` |
+| 本地服务组合、JSON 设置、SQLite 数据与迁移 | `src/DeskZone.Storage/LocalBackend.cs`、`JsonSettingsStore.cs`、`SQLite/SqliteWorkspaceStore.cs`、`SQLite/SqliteStorageInitializer.cs` |
+| Windows 桌面挂载、Shell 打开/删除/原生菜单和快捷方式解析 | `src/DeskZone.Shell/WindowsDesktopHostService.cs`、`WindowsShellService.cs`、`WindowsShellContextMenuService.cs`、`WindowsShortcutTargetResolver.cs` |
+| 文件变更监听、数据包导入导出、备份 | `src/DeskZone.Storage/FileSystemChangeMonitor.cs`、`DataTransferService.cs`、`CategoryFolderExportService.cs`、`Backup/SqliteBackupService.cs` |
+| 实时预览启动与重建行为 | `scripts/Start-DeskZoneLivePreview.ps1`、`src/DeskZone.App/DeskZone.App.csproj` |
+
+索引只用于快速定位；修改前仍要跟进调用链、接口实现和当前 `git diff`，不要仅凭文件名推断行为归属。
 
 ## 运行机制
 
@@ -249,6 +289,10 @@ Start-Process .\src\DeskZone.App\bin\Debug\net10.0-windows\DeskZone.exe
 ```
 
 Debug、Release 和安装版共用同一个单实例锁，并兼容旧 Debug 锁：在同一 Windows 会话里只允许一个 DeskZone 实例访问用户数据、显示桌面面板。重复打开只会显示已有实例并退出，不会再生成第二个面板。要切换到最新源码版本，先完全退出现有版本，再构建并启动 Debug；修改代码后，重新构建并重启上述 Debug 版本即可看到变化。不要通过桌面旧快捷方式验证源码改动；如果需要验证安装流程，应先完成源码 Git 提交，再单独构建 Release、发布并运行安装器。
+
+桌面“DeskZone 实时预览”快捷方式运行 `scripts/Start-DeskZoneLivePreview.ps1`，以 Debug 配置启动 `dotnet watch`。启动前需要从通知区域完全退出其他 DeskZone 实例；监视器会在前台控制台持续运行，按 `Ctrl+C` 停止。运行时支持的 C# 改动会热重载；WPF XAML 与其他不支持热重载的改动会由监视器自动重新构建并重启预览，无需手动构建或重新启动。自动重启时当前窗口会关闭并重新打开。
+
+维护代码时，如果开始前用户已经打开“DeskZone 实时预览”，而代码编辑、热重载或重建使预览窗口关闭，应在修改完成前自动恢复预览并确保窗口重新打开：先让仍在运行的 `dotnet watch` 完成重建和自动重启；如果监视器已退出或预览未恢复，则按项目单实例规则重新运行上述脚本。不要把原先已打开的预览留在关闭状态；如果无法恢复，应说明原因。
 
 安装器对没有历史安装位置的新用户默认显示 `D:\DeskZone`；已有安装会沿用用户数据中记录的原安装目录，用户仍可在安装页面手动选择其他目录。
 

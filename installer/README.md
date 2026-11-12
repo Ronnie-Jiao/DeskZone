@@ -16,6 +16,8 @@ Inno Setup 只负责显示解压进度、解压和等待安装向导退出，不
   `%LOCALAPPDATA%\DeskZone` 必须严格分离。
 - 在线更新检查读取 `http://106.55.34.191/deskzone/manifest.json`；发现新版本时提供自包含安装包下载链接。安装器仍需用户手动运行以完成升级。
 
+DeskZone 更新文件存放在服务器的 `/var/www/html/deskzone/`。服务器 IP 同时用于 HotKeyHub，其 Nginx 站点 `/etc/nginx/sites-available/hotkeyhub` 必须保留 `/deskzone/` 路由；相应配置模板位于 `C:\develop\HotKeyHub\installer\server\hotkeyhub.nginx.conf`。发布新版时先上传安装包，核对其 SHA-256，再更新 `manifest.json` 中的版本、下载地址和哈希。更新通道目前使用 HTTP，客户端只打开下载地址，不会验证下载文件的签名或自动安装。
+
 ## 使用方式
 
 在仓库根目录执行：

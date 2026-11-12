@@ -10,12 +10,17 @@ public sealed class CategoryViewModel : BindableBase
     private string _searchText = string.Empty;
     private bool _isExpanded;
     private bool _isSearchActive;
+    private bool _showFileExtensions;
 
-    public CategoryViewModel(Category model, IEnumerable<DesktopItem> items)
+    public CategoryViewModel(
+        Category model,
+        IEnumerable<DesktopItem> items,
+        bool showFileExtensions = false)
     {
         _model = model;
         _name = model.Name;
         _isExpanded = !model.IsCollapsed;
+        _showFileExtensions = showFileExtensions;
         ReplaceItems(items);
     }
 
@@ -79,10 +84,27 @@ public sealed class CategoryViewModel : BindableBase
             Items.Add(new DesktopItemViewModel(
                 item,
                 isRecentItem: IsRecentlyOpened,
-                canReorder: !IsSystem));
+                canReorder: !IsSystem,
+                showFileExtensions: _showFileExtensions));
         }
 
         ApplySearch(string.Empty);
+    }
+
+    public void SetShowFileExtensions(bool showFileExtensions)
+    {
+        if (_showFileExtensions == showFileExtensions)
+        {
+            return;
+        }
+
+        _showFileExtensions = showFileExtensions;
+        foreach (var item in Items)
+        {
+            item.SetShowFileExtensions(showFileExtensions);
+        }
+
+        ApplySearch(_searchText);
     }
 
     public void ApplySearch(string searchText)

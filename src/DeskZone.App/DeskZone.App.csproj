@@ -17,6 +17,7 @@
   <ItemGroup>
     <Resource Include="Assets\DeskZoneLogo.png" />
     <Resource Include="Assets\DeskZoneLogoCompact.png" />
+    <Watch Include="**\*.xaml" Exclude="bin\**;obj\**;artifacts\**" />
     <ProjectReference Include="../DeskZone.Core/DeskZone.Core.csproj" />
     <ProjectReference Include="../DeskZone.Shell/DeskZone.Shell.csproj" />
     <ProjectReference Include="../DeskZone.Storage/DeskZone.Storage.csproj" />
