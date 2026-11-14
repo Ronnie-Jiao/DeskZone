@@ -43,7 +43,6 @@
         <SolidColorBrush x:Key="SettingsItemBorderBrush" Color="#E1ECF6" />
         <SolidColorBrush x:Key="SettingsActionSurfaceBrush" Color="#EEF8FF" />
         <SolidColorBrush x:Key="SettingsActionBorderBrush" Color="#A9D3FA" />
-        <SolidColorBrush x:Key="SettingsResetBorderBrush" Color="#C9D9E8" />
         <Thickness x:Key="CategoryBorderThickness">0</Thickness>
         <Thickness x:Key="FileItemBorderThickness">0</Thickness>
         <Thickness x:Key="NewCategoryBorderThickness">0</Thickness>
@@ -270,6 +269,12 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+        </Style>
+        <Style x:Key="SettingsSectionTitle" TargetType="TextBlock">
+            <Setter Property="Margin" Value="0,10,0,6" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
         </Style>
     </Window.Resources>
 
@@ -698,7 +703,7 @@
                                                             MinHeight="72"
                                                             Margin="3"
                                                             Padding="5"
-                                                            CornerRadius="0"
+                                                            CornerRadius="8"
                                                              Cursor="Hand"
                                                              ToolTip="{Binding Path}"
                                                              Tag="{Binding}"
@@ -717,9 +722,9 @@
                                                                 <Setter Property="BorderThickness" Value="{DynamicResource FileItemBorderThickness}" />
                                                                 <Style.Triggers>
                                                                     <DataTrigger Binding="{Binding IsSelected}" Value="True">
-                                                                        <Setter Property="Background" Value="#331678FF" />
-                                                                        <Setter Property="BorderBrush" Value="{DynamicResource ActionBrush}" />
-                                                                        <Setter Property="BorderThickness" Value="1.5" />
+                                                                        <Setter Property="Background" Value="#55FFFFFF" />
+                                                                        <Setter Property="BorderBrush" Value="Transparent" />
+                                                                        <Setter Property="BorderThickness" Value="0" />
                                                                     </DataTrigger>
                                                                 </Style.Triggers>
                                                             </Style>
@@ -906,23 +911,35 @@
                                       VerticalScrollBarVisibility="Auto"
                                       HorizontalScrollBarVisibility="Disabled">
                             <StackPanel>
-                                <TextBlock Margin="0,0,0,7"
-                                           FontSize="11"
-                                           FontWeight="SemiBold"
-                                           Foreground="{StaticResource MutedBrush}"
-                                           Text="桌面组件" />
+                                <TextBlock Style="{StaticResource SettingsSectionTitle}"
+                                           Text="窗口" />
                                 <CheckBox x:Name="SettingsLockPositionToggle"
                                           Style="{StaticResource SettingsToggle}"
                                           Click="SettingsLockPosition_Click"
                                           FontWeight="SemiBold"
                                           Foreground="{StaticResource TextBrush}"
                                           Content="锁定窗口位置与大小" />
+                                <CheckBox x:Name="SettingsTransparencyToggle"
+                                          Style="{StaticResource SettingsToggle}"
+                                          Click="SettingsTransparency_Click"
+                                          FontWeight="SemiBold"
+                                          Foreground="{StaticResource TextBrush}"
+                                          Content="透明显示" />
+
+                                <TextBlock Style="{StaticResource SettingsSectionTitle}"
+                                           Text="启动与关闭" />
                                 <CheckBox x:Name="SettingsStartWithWindowsToggle"
                                           Style="{StaticResource SettingsToggle}"
                                           Click="SettingsStartWithWindows_Click"
                                           FontWeight="SemiBold"
                                           Foreground="{StaticResource TextBrush}"
                                           Content="开机自动启动" />
+                                <CheckBox x:Name="SettingsCheckUpdatesOnStartupToggle"
+                                          Style="{StaticResource SettingsToggle}"
+                                          Click="SettingsCheckUpdatesOnStartup_Click"
+                                          FontWeight="SemiBold"
+                                          Foreground="{StaticResource TextBrush}"
+                                          Content="启动时检查更新" />
                                 <CheckBox x:Name="SettingsCloseToTrayToggle"
                                           Style="{StaticResource SettingsToggle}"
                                           Click="SettingsCloseToTray_Click"
@@ -930,10 +947,7 @@
                                           Foreground="{StaticResource TextBrush}"
                                           Content="关闭时保留到通知区域" />
 
-                                <TextBlock Margin="0,8,0,7"
-                                           FontSize="11"
-                                           FontWeight="SemiBold"
-                                           Foreground="{StaticResource MutedBrush}"
+                                <TextBlock Style="{StaticResource SettingsSectionTitle}"
                                            Text="数据" />
                                 <StackPanel Margin="0,0,0,8"
                                             Orientation="Horizontal">
@@ -969,51 +983,48 @@
                                             Content="备份"
                                             Click="SettingsBackupData_Click" />
                                 </StackPanel>
-                                <Button Padding="10,7"
-                                        HorizontalAlignment="Left"
-                                        Background="Transparent"
-                                        BorderBrush="{DynamicResource SettingsResetBorderBrush}"
-                                        Foreground="{StaticResource MutedBrush}"
-                                        Cursor="Hand"
-                                        Content="恢复窗口大小"
-                                        Click="SettingsRestoreSize_Click" />
-
-                                <TextBlock Margin="0,14,0,7"
-                                           FontSize="11"
-                                           FontWeight="SemiBold"
-                                           Foreground="{StaticResource MutedBrush}"
+                                <TextBlock Style="{StaticResource SettingsSectionTitle}"
                                            Text="关于" />
-                                <TextBlock x:Name="AboutVersionText"
-                                           Margin="0,0,0,4"
-                                           Foreground="{StaticResource TextBrush}" />
-                                <TextBlock Margin="0,0,0,8"
+                                <Grid Margin="0,0,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="AboutVersionText"
+                                               VerticalAlignment="Center"
+                                               Foreground="{StaticResource TextBrush}" />
+                                    <StackPanel Grid.Column="1"
+                                                Margin="0,0,13,0"
+                                                HorizontalAlignment="Right"
+                                                Orientation="Horizontal">
+                                        <Button x:Name="DownloadUpdateButton"
+                                                Padding="9,5"
+                                                Margin="0,0,8,0"
+                                                Background="{DynamicResource SettingsActionSurfaceBrush}"
+                                                BorderBrush="{DynamicResource SettingsActionBorderBrush}"
+                                                Foreground="{StaticResource BrandBrush}"
+                                                Cursor="Hand"
+                                                Content="下载更新"
+                                                Visibility="Collapsed"
+                                                Click="DownloadUpdate_Click" />
+                                        <Button x:Name="CheckUpdatesButton"
+                                                Padding="9,5"
+                                                Background="{DynamicResource SettingsActionSurfaceBrush}"
+                                                BorderBrush="{DynamicResource SettingsActionBorderBrush}"
+                                                Foreground="{StaticResource BrandBrush}"
+                                                Cursor="Hand"
+                                                Content="检查更新"
+                                                Click="CheckUpdates_Click" />
+                                    </StackPanel>
+                                </Grid>
+                                <TextBlock Margin="0,0,0,4"
                                            Foreground="{StaticResource MutedBrush}"
                                            Text="开发者：DeskZone 项目组" />
-                                <StackPanel Orientation="Horizontal">
-                                    <Button x:Name="CheckUpdatesButton"
-                                            Padding="9,5"
-                                            Margin="0,0,8,0"
-                                            Background="{DynamicResource SettingsActionSurfaceBrush}"
-                                            BorderBrush="{DynamicResource SettingsActionBorderBrush}"
-                                            Foreground="{StaticResource BrandBrush}"
-                                            Cursor="Hand"
-                                            Content="检查更新"
-                                            Click="CheckUpdates_Click" />
-                                    <Button x:Name="DownloadUpdateButton"
-                                            Padding="9,5"
-                                            Background="{DynamicResource SettingsActionSurfaceBrush}"
-                                            BorderBrush="{DynamicResource SettingsActionBorderBrush}"
-                                            Foreground="{StaticResource BrandBrush}"
-                                            Cursor="Hand"
-                                            Content="下载更新"
-                                            Visibility="Collapsed"
-                                            Click="DownloadUpdate_Click" />
-                                </StackPanel>
                                 <TextBlock x:Name="UpdateStatusText"
                                            Margin="0,7,0,0"
                                            TextWrapping="Wrap"
                                            Foreground="{StaticResource MutedBrush}"
-                                           Text="尚未检查更新" />
+                                           Visibility="Collapsed" />
                             </StackPanel>
                         </ScrollViewer>
 

@@ -51,6 +51,7 @@ public partial class MainWindow : Window
     private const string CloseToTraySettingKey = "close-to-tray";
     private const string StartWithWindowsSettingKey = "start-with-windows";
     private const string TransparentModeSettingKey = "transparent-mode";
+    private const string CheckUpdatesOnStartupSettingKey = "check-updates-on-startup";
     private const string WindowsStartupRegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string WindowsStartupRegistryValueName = "DeskZone";
     private const int WmSize = 0x0005;
@@ -165,6 +166,7 @@ public partial class MainWindow : Window
     private bool _closeToTray = true;
     private bool _startWithWindows;
     private bool _transparentMode = true;
+    private bool _checkUpdatesOnStartup;
     private double _expandedHeight = 650;
     private bool _applyingSettings;
     private bool _locked;
@@ -466,6 +468,8 @@ public partial class MainWindow : Window
             var savedCloseToTray = await _backend.Settings.LoadAsync<bool?>(CloseToTraySettingKey);
             _closeToTray = savedCloseToTray ?? true;
             await RestoreStartWithWindowsPreferenceAsync();
+            var savedCheckUpdatesOnStartup = await _backend.Settings.LoadAsync<bool?>(CheckUpdatesOnStartupSettingKey);
+            _checkUpdatesOnStartup = savedCheckUpdatesOnStartup ?? false;
 
             var panel = await _backend.Layout.GetPanelAsync(PanelId);
             _panelCreatedAt = panel.CreatedAt;
@@ -503,6 +507,11 @@ public partial class MainWindow : Window
         finally
         {
             _applyingLayout = false;
+        }
+
+        if (_checkUpdatesOnStartup)
+        {
+            _ = CheckUpdatesAsync(showProgress: false);
         }
     }
 
@@ -2573,7 +2582,13 @@ public partial class MainWindow : Window
 
     private async void Transparency_Click(object sender, RoutedEventArgs e)
     {
-        _transparentMode = !_transparentMode;
+        await SetTransparencyModeAsync(!_transparentMode);
+    }
+
+    private async Task SetTransparencyModeAsync(bool transparent)
+    {
+        var previousValue = _transparentMode;
+        _transparentMode = transparent;
         ApplyAppearance(_transparentMode);
 
         try
@@ -2582,8 +2597,12 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            _transparentMode = previousValue;
+            ApplyAppearance(_transparentMode);
             ShowError("保存显示样式失败", ex);
         }
+
+        SyncSettingsControls();
     }
 
     private void ApplyAppearance(bool transparent)
@@ -2644,10 +2663,6 @@ public partial class MainWindow : Window
         SetAppearanceBrush("SettingsActionBorderBrush", transparent
             ? Color.FromArgb(0x80, 0xA9, 0xD3, 0xFA)
             : Color.FromRgb(0xA9, 0xD3, 0xFA));
-        SetAppearanceBrush("SettingsResetBorderBrush", transparent
-            ? Color.FromArgb(0x80, 0xFF, 0xFF, 0xFF)
-            : Color.FromRgb(0xC9, 0xD9, 0xE8));
-
         Resources["CategoryBorderThickness"] = new Thickness(transparent ? 0 : 1);
         Resources["FileItemBorderThickness"] = new Thickness(0);
         Resources["NewCategoryBorderThickness"] = new Thickness(transparent ? 0 : 1);
@@ -2707,6 +2722,11 @@ public partial class MainWindow : Window
         SettingsOverlay.Visibility = Visibility.Visible;
         SyncSettingsControls();
         AboutVersionText.Text = $"桌序 DeskZone {GetCurrentVersion()}";
+        if (!CheckUpdatesButton.IsEnabled)
+        {
+            UpdateStatusText.Text = "正在检查…";
+            UpdateStatusText.Visibility = Visibility.Visible;
+        }
     }
 
     private void SettingsOverlay_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -2727,9 +2747,22 @@ public partial class MainWindow : Window
 
     private async void CheckUpdates_Click(object sender, RoutedEventArgs e)
     {
+        await CheckUpdatesAsync(showProgress: true);
+    }
+
+    private async Task CheckUpdatesAsync(bool showProgress)
+    {
         CheckUpdatesButton.IsEnabled = false;
         DownloadUpdateButton.Visibility = Visibility.Collapsed;
-        UpdateStatusText.Text = "正在检查…";
+        if (showProgress)
+        {
+            UpdateStatusText.Visibility = Visibility.Visible;
+            UpdateStatusText.Text = "正在检查…";
+        }
+        else
+        {
+            UpdateStatusText.Visibility = Visibility.Collapsed;
+        }
         try
         {
             using var response = await UpdateHttpClient.GetAsync(UpdateManifestUri);
@@ -2751,18 +2784,20 @@ public partial class MainWindow : Window
             {
                 _availableUpdate = manifest;
                 UpdateStatusText.Text = $"发现新版本 {remoteVersion}：{manifest.Notes}";
+                UpdateStatusText.Visibility = Visibility.Visible;
                 DownloadUpdateButton.Visibility = Visibility.Visible;
             }
             else
             {
                 _availableUpdate = null;
                 UpdateStatusText.Text = $"已是最新版本（{currentVersion}）";
+                UpdateStatusText.Visibility = Visibility.Visible;
             }
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             _availableUpdate = null;
-            UpdateStatusText.Text = $"检查失败：{ex.Message}";
+            UpdateStatusText.Visibility = Visibility.Collapsed;
         }
         finally
         {
@@ -2783,6 +2818,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            UpdateStatusText.Visibility = Visibility.Visible;
             UpdateStatusText.Text = $"打开下载入口失败：{ex.Message}";
         }
     }
@@ -2807,6 +2843,16 @@ public partial class MainWindow : Window
             ApplyLockedState(toggle.IsChecked == true);
             SyncSettingsControls();
         }
+    }
+
+    private async void SettingsTransparency_Click(object sender, RoutedEventArgs e)
+    {
+        if (_applyingSettings || sender is not System.Windows.Controls.CheckBox toggle)
+        {
+            return;
+        }
+
+        await SetTransparencyModeAsync(toggle.IsChecked == true);
     }
 
     private async void SettingsCloseToTray_Click(object sender, RoutedEventArgs e)
@@ -2857,6 +2903,29 @@ public partial class MainWindow : Window
 
             _startWithWindows = previousValue;
             ShowError("设置开机自动启动失败", ex);
+        }
+
+        SyncSettingsControls();
+    }
+
+    private async void SettingsCheckUpdatesOnStartup_Click(object sender, RoutedEventArgs e)
+    {
+        if (_applyingSettings || sender is not System.Windows.Controls.CheckBox toggle)
+        {
+            return;
+        }
+
+        var requestedValue = toggle.IsChecked == true;
+        var previousValue = _checkUpdatesOnStartup;
+        try
+        {
+            await _backend.Settings.SaveAsync(CheckUpdatesOnStartupSettingKey, requestedValue);
+            _checkUpdatesOnStartup = requestedValue;
+        }
+        catch (Exception ex)
+        {
+            _checkUpdatesOnStartup = previousValue;
+            ShowError("保存更新检查设置失败", ex);
         }
 
         SyncSettingsControls();
@@ -2998,6 +3067,9 @@ public partial class MainWindow : Window
         _closeToTray = savedCloseToTray ?? _closeToTray;
         await RestoreStartWithWindowsPreferenceAsync();
 
+        var savedCheckUpdatesOnStartup = await _backend.Settings.LoadAsync<bool?>(CheckUpdatesOnStartupSettingKey);
+        _checkUpdatesOnStartup = savedCheckUpdatesOnStartup ?? _checkUpdatesOnStartup;
+
         var panel = await _backend.Layout.GetPanelAsync(PanelId);
         if (panel is not null)
         {
@@ -3024,19 +3096,6 @@ public partial class MainWindow : Window
         EnsureDesktopAttachment();
     }
 
-    private void SettingsRestoreSize_Click(object sender, RoutedEventArgs e)
-    {
-        Width = Math.Max(MinWidth, 380);
-        Height = Math.Max(MinHeight, 650);
-        if (!_desktopPinned)
-        {
-            Left = Math.Max(0, (SystemParameters.WorkArea.Width - Width) / 2);
-            Top = Math.Max(0, (SystemParameters.WorkArea.Height - Height) / 2);
-        }
-
-        ScheduleLayoutSave();
-    }
-
     private async void Close_Click(object sender, RoutedEventArgs e)
     {
         if (_closeToTray)
@@ -3060,8 +3119,10 @@ public partial class MainWindow : Window
         try
         {
             SettingsLockPositionToggle.IsChecked = _locked;
+            SettingsTransparencyToggle.IsChecked = _transparentMode;
             SettingsCloseToTrayToggle.IsChecked = _closeToTray;
             SettingsStartWithWindowsToggle.IsChecked = _startWithWindows;
+            SettingsCheckUpdatesOnStartupToggle.IsChecked = _checkUpdatesOnStartup;
         }
         finally
         {
